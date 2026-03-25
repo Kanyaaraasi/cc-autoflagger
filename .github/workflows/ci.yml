@@ -12,6 +12,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - run: brew install libomp
       - uses: astral-sh/setup-uv@v5
       - run: uv python install
       - run: uv sync --dev
@@ -26,6 +27,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - run: brew install libomp
       - uses: astral-sh/setup-uv@v5
       - run: uv python install
       - run: uv sync
