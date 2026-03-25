@@ -33,6 +33,7 @@ extract = "src.cli:extract"
 train = "src.cli:train"
 predict = "src.cli:predict"
 dashboard = "src.app:main"
+export-static = "src.export_static:main"
 
 [dependency-groups]
 dev = [

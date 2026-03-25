@@ -1,0 +1,85 @@
+name: CI — Test, Train & Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install
+      - run: uv sync --dev
+      - run: uv run pytest tests/ -v --tb=short -x
+
+  build:
+    name: Train Model & Export Static Site
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install
+      - run: uv sync
+
+      - name: Run pipeline (extract → train → predict)
+        run: uv run pipeline
+
+      - name: Export static dashboard
+        run: uv run export-static
+
+      - name: Verify outputs
+        run: |
+          test -f outputs/submission.csv
+          test -f models/model.pkl
+          test -f models/config.json
+          test -f dist/index.html
+          test -f dist/call.html
+          echo "All outputs verified"
+
+      # --- Release model artifacts ---
+      - name: Get model info
+        id: info
+        run: |
+          python3 -c "
+          import json
+          c = json.load(open('models/config.json'))
+          print(f'model={c[\"best_model\"]}')
+          print(f'threshold={c[\"threshold\"]}')
+          print(f'features={len(c[\"columns\"])}')
+          " >> "$GITHUB_OUTPUT"
+          echo "tag=v$(date -u +%Y%m%d.%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.info.outputs.tag }}
+          name: "Model ${{ steps.info.outputs.tag }}"
+          body: |
+            | Metric | Value |
+            |--------|-------|
+            | Model | ${{ steps.info.outputs.model }} |
+            | Features | ${{ steps.info.outputs.features }} |
+            | Threshold | ${{ steps.info.outputs.threshold }} |
+
+            **Files:** `model.pkl`, `config.json`, `submission.csv`
+          files: |
+            models/model.pkl
+            models/config.json
+            outputs/submission.csv
+
+      # --- Deploy to Cloudflare Pages ---
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=cc-autoflagger
