@@ -55,6 +55,11 @@ jobs:
           print(f'model={c[\"best_model\"]}')
           print(f'threshold={c[\"threshold\"]}')
           print(f'features={len(c[\"columns\"])}')
+          m = c.get('val_metrics', {})
+          print(f'f1={m.get(\"f1\", \"?\")}')
+          print(f'precision={m.get(\"precision\", \"?\")}')
+          print(f'recall={m.get(\"recall\", \"?\")}')
+          print(f'cv_f1={c.get(\"cv_f1_mean\", \"?\")} ± {c.get(\"cv_f1_std\", \"?\")}')
           " >> "$GITHUB_OUTPUT"
           echo "tag=v$(date -u +%Y%m%d.%H%M%S)" >> "$GITHUB_OUTPUT"
 
@@ -66,9 +71,15 @@ jobs:
           body: |
             | Metric | Value |
             |--------|-------|
+            | Val F1 | ${{ steps.info.outputs.f1 }} |
+            | Precision | ${{ steps.info.outputs.precision }} |
+            | Recall | ${{ steps.info.outputs.recall }} |
+            | CV F1 | ${{ steps.info.outputs.cv_f1 }} |
             | Model | ${{ steps.info.outputs.model }} |
             | Features | ${{ steps.info.outputs.features }} |
             | Threshold | ${{ steps.info.outputs.threshold }} |
+
+            **Dashboard:** [cc-autoflagger.pages.dev](https://cc-autoflagger.pages.dev)
 
             **Files:** `model.pkl`, `config.json`, `submission.csv`
           files: |

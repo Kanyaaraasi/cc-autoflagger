@@ -246,6 +246,7 @@ def train_and_evaluate():
     model_to_save = xgb if best_name == "xgb" else (lgb if best_name == "lgb" else {"xgb": xgb, "lgb": lgb})
     with open(MODEL_DIR / "model.pkl", "wb") as f:
         pickle.dump(model_to_save, f)
+    best_val_pred = (best_proba >= best_thresh).astype(int)
     with open(MODEL_DIR / "config.json", "w") as f:
         json.dump({
             "threshold": best_thresh,
@@ -253,6 +254,13 @@ def train_and_evaluate():
             "best_model": best_name,
             "xgb_params": xgb_params,
             "lgb_params": lgb_params,
+            "val_metrics": {
+                "f1": round(f1_score(y_val, best_val_pred, zero_division=0), 4),
+                "precision": round(precision_score(y_val, best_val_pred, zero_division=0), 4),
+                "recall": round(recall_score(y_val, best_val_pred, zero_division=0), 4),
+            },
+            "cv_f1_mean": round(float(np.mean(cv_f1s)), 4),
+            "cv_f1_std": round(float(np.std(cv_f1s)), 4),
         }, f)
 
     log.info(f"\nModel saved ({best_name}) to {MODEL_DIR}")
