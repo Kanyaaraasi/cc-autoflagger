@@ -16,7 +16,7 @@ class FeaturePipeline:
     """Fits on train, transforms any split into a feature matrix."""
 
     def __init__(self):
-        self.text_extractor = TextFeatureExtractor(max_tfidf_features=15)
+        self.text_extractor = TextFeatureExtractor(max_tfidf_features=50)
         self.outcome_predictor = OutcomePredictor()
         self._fitted = False
 
