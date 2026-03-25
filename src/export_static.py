@@ -217,18 +217,25 @@ def export():
     # Inject data script before </body>
     patched_index = patched_index.replace("</body>", data_script + "\n</body>")
 
-    # Patch call.html: replace fetch with static lookup
+    # Patch call.html: replace entire init with static lookup
     patched_call = call_html.replace(
-        "async init() {",
         """async init() {
-          const callId = window.location.pathname.split('/call/')[1] || new URLSearchParams(window.location.search).get('id');
+          const callId = window.location.pathname.split('/call/')[1];
+          const data = await fetch('/api/call/' + callId).then(r => r.json());
+          if (!data.error) {
+            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals } };
+            this.loaded = true;
+          }
+        },""",
+        """async init() {
+          const callId = new URLSearchParams(window.location.search).get('id') || window.location.pathname.split('/call/')[1];
           if (window.__CALL_DETAILS__ && callId && window.__CALL_DETAILS__[callId]) {
             const data = window.__CALL_DETAILS__[callId];
             const empty = this.call;
             this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals } };
             this.loaded = true;
-            return;
-          }"""
+          }
+        },"""
     )
     patched_call = patched_call.replace("</body>", detail_script + "\n</body>")
 
@@ -236,10 +243,6 @@ def export():
     patched_index = patched_index.replace(
         "window.location.href = '/call/' + call.call_id",
         "window.location.href = 'call.html?id=' + call.call_id"
-    )
-    patched_call = patched_call.replace(
-        "const callId = window.location.pathname.split('/call/')[1];",
-        "const callId = new URLSearchParams(window.location.search).get('id') || window.location.pathname.split('/call/')[1];"
     )
     # Back link
     patched_call = patched_call.replace('href="/"', 'href="index.html"')
