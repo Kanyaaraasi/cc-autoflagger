@@ -8,6 +8,7 @@ from .logger import get_logger
 from .signals import heuristics, transcript_diff, number_checker, flow_checker
 from .signals.text_features import TextFeatureExtractor
 from .signals.outcome_predictor import OutcomePredictor
+from .signals.nli_checker import NLIChecker
 
 log = get_logger("features")
 
@@ -18,6 +19,7 @@ class FeaturePipeline:
     def __init__(self):
         self.text_extractor = TextFeatureExtractor(max_tfidf_features=50)
         self.outcome_predictor = OutcomePredictor()
+        self.nli_checker = NLIChecker()
         self._fitted = False
 
     def fit(self, train_df: pd.DataFrame):
@@ -26,6 +28,8 @@ class FeaturePipeline:
         self.text_extractor.fit(train_df)
         log.info("Fitting outcome predictor...")
         self.outcome_predictor.fit(train_df)
+        log.info("Fitting NLI checker...")
+        self.nli_checker.fit(train_df)
         self._fitted = True
         return self
 
@@ -55,8 +59,11 @@ class FeaturePipeline:
         log.info(f"{prefix}Extracting outcome predictor signals...")
         outcome = self.outcome_predictor.transform(df)
 
+        log.info(f"{prefix}Extracting NLI contradiction signals...")
+        nli = self.nli_checker.transform(df)
+
         all_features = pd.concat(
-            [structured, heur, diff, nums, flow, text, outcome],
+            [structured, heur, diff, nums, flow, text, outcome, nli],
             axis=1,
         )
 

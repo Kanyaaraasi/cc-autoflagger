@@ -29,6 +29,14 @@ def pipeline():
     X_test[common_cols].to_parquet(OUTPUT_DIR / "X_test.parquet")
     log.info(f"Saved {len(common_cols)} features")
 
+    # Free NLI model and torch memory before training
+    pipe.nli_checker.unload()
+    del pipe
+    import gc, torch
+    gc.collect()
+    if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
     log.info("STEP 3: Training and evaluating")
     train_and_evaluate()
 
