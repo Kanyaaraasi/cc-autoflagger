@@ -14,21 +14,18 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET
 from .data_loader import load_all, parse_responses
-from .signals import heuristics, transcript_diff, number_checker, flow_checker
-from .signals.category_predictor import predict_category
 
 app = FastAPI(title="CareCaller Auto-Flagger Dashboard")
 
-# --- Global state loaded on startup ---
 _state = {}
 
 
 def _load_state():
-    """Load model, data, and precompute predictions."""
+    """Load models, data, and precompute predictions."""
     if _state:
         return
 
-    # Load model + config
+    # Load base ML model + config
     with open(MODEL_DIR / "model.pkl", "rb") as f:
         model = pickle.load(f)
     with open(MODEL_DIR / "config.json") as f:
@@ -36,6 +33,16 @@ def _load_state():
 
     columns = config["columns"]
     threshold = config["threshold"]
+
+    # Load meta-model if available (stacking)
+    meta_model, meta_config = None, None
+    meta_path = MODEL_DIR / "meta_model.pkl"
+    meta_config_path = MODEL_DIR / "meta_config.json"
+    if meta_path.exists() and meta_config_path.exists():
+        with open(meta_path, "rb") as f:
+            meta_model = pickle.load(f)
+        with open(meta_config_path) as f:
+            meta_config = json.load(f)
 
     # Load data
     train, val, test = load_all()
@@ -45,17 +52,18 @@ def _load_state():
     X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
     X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
 
+    # Load NLI features if available
+    nli_splits = {}
+    for name in ["train", "val", "test"]:
+        nli_path = OUTPUT_DIR / f"nli_{name}.parquet"
+        if nli_path.exists():
+            nli_splits[name] = pd.read_parquet(nli_path)
+
     # Compute predictions for all splits
     splits = {}
     for name, df, X in [("train", train, X_train), ("val", val, X_val), ("test", test, X_test)]:
         proba = model.predict_proba(X)[:, 1]
         pred = proba >= threshold
-
-        # Category prediction
-        categories = []
-        for i, row in X.iterrows():
-            vn = str(df.iloc[i].get("validation_notes", "")) if pred[i] else ""
-            categories.append(predict_category(row, vn) if pred[i] else "")
 
         records = []
         for idx, (_, row) in enumerate(df.iterrows()):
@@ -69,10 +77,12 @@ def _load_state():
                 "turn_count": int(row["turn_count"]),
                 "probability": round(float(proba[idx]), 4),
                 "predicted_ticket": bool(pred[idx]),
-                "predicted_category": categories[idx],
+                "predicted_category": "",
                 "split": name,
             }
-            # Include actual label for train/val
+            # Add NLI score if available
+            if name in nli_splits:
+                rec["nli_max_contradiction"] = round(float(nli_splits[name].iloc[idx]["nli_max_contradiction"]), 4)
             if name != "test":
                 rec["actual_ticket"] = bool(row[TARGET])
             records.append(rec)
@@ -85,11 +95,16 @@ def _load_state():
     val_pred = (val_proba >= threshold).astype(int)
 
     # Feature importance
-    importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
+    if hasattr(model, "feature_importances_"):
+        importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
+    else:
+        importance = pd.Series(dtype=float)
 
     _state.update({
         "model": model,
         "config": config,
+        "meta_model": meta_model,
+        "meta_config": meta_config,
         "columns": columns,
         "threshold": threshold,
         "splits": splits,
@@ -100,6 +115,7 @@ def _load_state():
         "X_train": X_train,
         "X_val": X_val,
         "X_test": X_test,
+        "nli_splits": nli_splits,
         "importance": importance,
         "val_metrics": {
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
@@ -137,12 +153,6 @@ def get_stats():
     all_calls = s["all_calls"]
     flagged = [c for c in all_calls if c["predicted_ticket"]]
 
-    # Category breakdown
-    cat_counts = {}
-    for c in flagged:
-        cat = c["predicted_category"] or "unknown"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
     # Outcome breakdown
     outcome_counts = {}
     for c in all_calls:
@@ -153,16 +163,35 @@ def get_stats():
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
 
+    # Model info
+    model_name = "Stacked NLI + LightGBM" if s["meta_config"] else s["config"]["best_model"].upper()
+
+    # NLI summary
+    nli_summary = None
+    nli_all = s["nli_splits"]
+    if nli_all:
+        import pandas as pd
+        all_nli = pd.concat([nli_all.get("train", pd.DataFrame()), nli_all.get("val", pd.DataFrame()), nli_all.get("test", pd.DataFrame())], ignore_index=True)
+        if "nli_max_contradiction" in all_nli.columns:
+            scores = all_nli["nli_max_contradiction"]
+            nli_summary = {
+                "High (>0.7)": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
+                "Medium (0.3-0.7)": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
+                "Low (<0.3)": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
+            }
+
     return {
         "total_calls": len(all_calls),
         "flagged_calls": len(flagged),
         "flagged_pct": round(len(flagged) / len(all_calls) * 100, 1),
         "threshold": s["threshold"],
         "val_metrics": s["val_metrics"],
-        "model": s["config"]["best_model"],
-        "model_params": s["config"].get("lgb_params") or s["config"].get("xgb_params"),
+        "model": model_name,
         "feature_count": len(s["columns"]),
-        "category_breakdown": cat_counts,
+        "has_nli": bool(s["nli_splits"]),
+        "has_stacking": s["meta_config"] is not None,
+        "stacked_val_f1": s["meta_config"]["stacked_val_f1"] if s["meta_config"] else None,
+        "nli_summary": nli_summary,
         "outcome_breakdown": outcome_counts,
         "splits": {
             "train": len(s["splits"]["train"]),
@@ -189,7 +218,6 @@ def get_calls(split: str = Query(default="all"), flagged_only: bool = Query(defa
 def get_call_detail(call_id: str):
     s = _state
 
-    # Find which split this call belongs to
     for split_name, df, X in [
         ("train", s["train_df"], s["X_train"]),
         ("val", s["val_df"], s["X_val"]),
@@ -206,7 +234,6 @@ def get_call_detail(call_id: str):
         # Probability
         proba = float(s["model"].predict_proba(X.loc[[idx]])[0, 1])
         predicted = proba >= s["threshold"]
-        category = predict_category(feat_row, str(row.get("validation_notes", ""))) if predicted else ""
 
         # Parse transcript into turns
         transcript = str(row.get("transcript_text", ""))
@@ -262,6 +289,26 @@ def get_call_detail(call_id: str):
             "validation_notes_words": int(feat_row.get("vn_word_count", 0)),
         }
 
+        # NLI signals
+        nli_data = s["nli_splits"].get(split_name)
+        if nli_data is not None:
+            feat_idx = df.index.get_loc(idx)
+            nli_row = nli_data.iloc[feat_idx]
+            signals["nli"] = {
+                "max_contradiction": round(float(nli_row.get("nli_max_contradiction", 0)), 4),
+                "answered_count_contradiction": round(float(nli_row.get("nli_answered_count_contradiction", 0)), 4),
+                "outcome_contradiction": round(float(nli_row.get("nli_outcome_contradiction", 0)), 4),
+                "completeness_contradiction": round(float(nli_row.get("nli_completeness_contradiction", 0)), 4),
+                "num_contradictions": int(nli_row.get("nli_num_contradictions", 0)),
+                "mean_entailment": round(float(nli_row.get("nli_mean_entailment", 1)), 4),
+            }
+        else:
+            signals["nli"] = {
+                "max_contradiction": 0, "answered_count_contradiction": 0,
+                "outcome_contradiction": 0, "completeness_contradiction": 0,
+                "num_contradictions": 0, "mean_entailment": 1,
+            }
+
         # Top features for this call
         nonzero = feat_row[feat_row != 0].abs().sort_values(ascending=False)
         top_features = [{"name": k, "value": round(float(feat_row[k]), 4)} for k in nonzero.head(20).index]
@@ -277,7 +324,7 @@ def get_call_detail(call_id: str):
             "turn_count": int(row["turn_count"]),
             "probability": round(proba, 4),
             "predicted_ticket": bool(predicted),
-            "predicted_category": category,
+            "predicted_category": "",
             "validation_notes": str(row.get("validation_notes", "")),
             "transcript_turns": turns,
             "responses": responses,
@@ -296,10 +343,22 @@ def get_call_detail(call_id: str):
 @app.get("/api/importance")
 def get_importance(top: int = Query(default=30)):
     imp = _state["importance"]
-    return [
+    result = [
         {"feature": name, "importance": round(float(val), 4)}
         for name, val in imp.head(top).items()
     ]
+
+    # Add meta-learner coefficients if stacking is active
+    meta = _state.get("meta_config")
+    if meta and _state.get("meta_model"):
+        meta_model = _state["meta_model"]
+        meta_features = meta.get("meta_features", [])
+        if hasattr(meta_model, "coef_") and len(meta_features) == len(meta_model.coef_[0]):
+            result.append({"feature": "--- META-LEARNER ---", "importance": 0})
+            for feat, coef in zip(meta_features, meta_model.coef_[0]):
+                result.append({"feature": f"meta:{feat}", "importance": round(float(coef), 4)})
+
+    return result
 
 
 def main():

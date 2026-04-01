@@ -270,6 +270,50 @@
         <div x-show="Object.keys(call.signals?.text_features?.keywords_found || {}).length === 0"
           class="text-sm" style="color: var(--chart-1); opacity: 0.7">&#10003; No issue keywords</div>
       </div>
+
+      <div class="card p-5 fade-in md:col-span-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">
+          NLI Contradiction Detection
+          <span class="font-normal text-[10px] ml-2" style="color: var(--muted-foreground)">(DeBERTa-v3)</span>
+        </h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Max Contradiction</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.max_contradiction > 0.7 ? 'var(--destructive)' : call.signals?.nli?.max_contradiction > 0.3 ? 'oklch(0.8 0.15 80)' : 'var(--chart-1)')"
+              x-text="(call.signals?.nli?.max_contradiction * 100).toFixed(1) + '%'"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Contradictions Found</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.num_contradictions > 0 ? 'var(--destructive)' : 'var(--chart-1)')"
+              x-text="call.signals?.nli?.num_contradictions"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Mean Entailment</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.mean_entailment < 0.3 ? 'var(--destructive)' : 'var(--chart-1)')"
+              x-text="(call.signals?.nli?.mean_entailment * 100).toFixed(1) + '%'"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-2" style="color: var(--muted-foreground)">Per-Hypothesis</div>
+            <div class="space-y-1 text-xs">
+              <template x-for="[key, label] in [['answered_count_contradiction', 'Answers'], ['outcome_contradiction', 'Outcome'], ['completeness_contradiction', 'Completeness']]" :key="key">
+                <div class="flex justify-between items-center">
+                  <span style="color: var(--muted-foreground)" x-text="label"></span>
+                  <div class="flex items-center gap-1.5">
+                    <div class="w-16 h-1.5" style="background: var(--secondary)">
+                      <div class="h-full bar-animate" :style="'width:' + ((call.signals?.nli?.[key] || 0) * 100) + '%; background:' + ((call.signals?.nli?.[key] || 0) > 0.5 ? 'var(--destructive)' : 'var(--chart-1)')"></div>
+                    </div>
+                    <span class="w-10 text-right font-mono" :style="(call.signals?.nli?.[key] || 0) > 0.5 ? 'color: var(--destructive)' : 'color: var(--muted-foreground)'"
+                      x-text="((call.signals?.nli?.[key] || 0) * 100).toFixed(0) + '%'"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Transcript + Q&A -->
@@ -352,6 +396,7 @@
           flow_checker: { edit_distance: 0, missing_states: 0, question_coverage: 0 },
           outcome_predictor: { disagreement: 0, confidence: 0 },
           text_features: { keywords_found: {} },
+          nli: { max_contradiction: 0, answered_count_contradiction: 0, outcome_contradiction: 0, completeness_contradiction: 0, num_contradictions: 0, mean_entailment: 1 },
         },
       };
       return {

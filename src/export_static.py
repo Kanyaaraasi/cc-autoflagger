@@ -1,8 +1,4 @@
-"""Export dashboard as a fully static site with all data embedded.
-
-Starts the API server, fetches all data, bakes it into the HTML templates,
-and writes a self-contained static site to dist/.
-"""
+"""Export dashboard as a fully static site with all data embedded."""
 
 import json
 import pickle
@@ -12,7 +8,6 @@ import pandas as pd
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET, PROJECT_ROOT
 from .data_loader import load_all
-from .signals.category_predictor import predict_category
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 
@@ -25,11 +20,27 @@ def build_api_data():
 
     columns = config["columns"]
     threshold = config["threshold"]
+
+    # Meta-model if available
+    meta_model, meta_config = None, None
+    if (MODEL_DIR / "meta_model.pkl").exists():
+        with open(MODEL_DIR / "meta_model.pkl", "rb") as f:
+            meta_model = pickle.load(f)
+        with open(MODEL_DIR / "meta_config.json") as f:
+            meta_config = json.load(f)
+
     train, val, test = load_all()
 
     X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[columns]
     X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
     X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
+
+    # NLI features
+    nli_splits = {}
+    for name in ["train", "val", "test"]:
+        nli_path = OUTPUT_DIR / f"nli_{name}.parquet"
+        if nli_path.exists():
+            nli_splits[name] = pd.read_parquet(nli_path)
 
     # Build calls data for all splits
     all_calls = []
@@ -40,9 +51,6 @@ def build_api_data():
         pred = proba >= threshold
 
         for idx, (_, row) in enumerate(df.iterrows()):
-            vn = str(row.get("validation_notes", ""))
-            cat = predict_category(X.iloc[idx], vn) if pred[idx] else ""
-
             call = {
                 "call_id": row["call_id"],
                 "outcome": row["outcome"],
@@ -53,7 +61,7 @@ def build_api_data():
                 "turn_count": int(row["turn_count"]),
                 "probability": round(float(proba[idx]), 4),
                 "predicted_ticket": bool(pred[idx]),
-                "predicted_category": cat,
+                "predicted_category": "",
                 "split": name,
             }
             if name != "test":
@@ -79,13 +87,28 @@ def build_api_data():
             nonzero = feat_row[feat_row != 0].abs().sort_values(ascending=False)
             top_features = [{"name": k, "value": round(float(feat_row[k]), 4)} for k in nonzero.head(20).index]
 
+            # NLI signals
+            nli_signals = {"max_contradiction": 0, "answered_count_contradiction": 0,
+                           "outcome_contradiction": 0, "completeness_contradiction": 0,
+                           "num_contradictions": 0, "mean_entailment": 1}
+            if name in nli_splits:
+                nli_row = nli_splits[name].iloc[idx]
+                nli_signals = {
+                    "max_contradiction": round(float(nli_row.get("nli_max_contradiction", 0)), 4),
+                    "answered_count_contradiction": round(float(nli_row.get("nli_answered_count_contradiction", 0)), 4),
+                    "outcome_contradiction": round(float(nli_row.get("nli_outcome_contradiction", 0)), 4),
+                    "completeness_contradiction": round(float(nli_row.get("nli_completeness_contradiction", 0)), 4),
+                    "num_contradictions": int(nli_row.get("nli_num_contradictions", 0)),
+                    "mean_entailment": round(float(nli_row.get("nli_mean_entailment", 1)), 4),
+                }
+
             detail = {
                 **call,
-                "validation_notes": vn,
+                "validation_notes": str(row.get("validation_notes", "")),
                 "transcript_turns": turns,
                 "responses": responses,
                 "signals": {
-                    "heuristics": {"fired": rule_cols, "total_fired": int(feat_row.get("rule_count_fired", 0))},
+                    "heuristics": {"fired": rule_cols, "total_fired": sum(rule_cols.values())},
                     "transcript_diff": {
                         "wer": round(float(feat_row.get("diff_wer", 0)), 4),
                         "cer": round(float(feat_row.get("diff_cer", 0)), 4),
@@ -104,8 +127,10 @@ def build_api_data():
                     "outcome_predictor": {
                         "disagreement": int(feat_row.get("outcome_disagreement", 0)),
                         "confidence": round(float(feat_row.get("outcome_pred_confidence", 0)), 4),
+                        "entropy": round(float(feat_row.get("outcome_pred_entropy", 0)), 4),
                     },
                     "text_features": {"keywords_found": kw_cols},
+                    "nli": nli_signals,
                 },
                 "top_features": top_features,
             }
@@ -117,15 +142,18 @@ def build_api_data():
     val_pred = (val_proba >= threshold).astype(int)
 
     # Feature importance
-    importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
-    importance_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in importance.head(30).items()]
+    importance_list = []
+    if hasattr(model, "feature_importances_"):
+        imp = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
+        importance_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
 
-    # Category breakdown
-    flagged = [c for c in all_calls if c["predicted_ticket"]]
-    cat_counts = {}
-    for c in flagged:
-        cat = c["predicted_category"] or "unknown"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    # Add meta-learner coefficients
+    if meta_model and hasattr(meta_model, "coef_") and meta_config:
+        meta_features = meta_config.get("meta_features", [])
+        if len(meta_features) == len(meta_model.coef_[0]):
+            importance_list.append({"feature": "--- META-LEARNER ---", "importance": 0})
+            for feat, coef in zip(meta_features, meta_model.coef_[0]):
+                importance_list.append({"feature": f"meta:{feat}", "importance": round(float(coef), 4)})
 
     # Outcome breakdown
     outcome_counts = {}
@@ -137,6 +165,9 @@ def build_api_data():
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
 
+    flagged = [c for c in all_calls if c["predicted_ticket"]]
+    model_name = "Stacked NLI + LightGBM" if meta_config else config["best_model"].upper()
+
     stats = {
         "total_calls": len(all_calls),
         "flagged_calls": len(flagged),
@@ -147,15 +178,14 @@ def build_api_data():
             "precision": round(precision_score(y_val, val_pred, zero_division=0), 4),
             "recall": round(recall_score(y_val, val_pred, zero_division=0), 4),
         },
-        "model": config["best_model"],
-        "model_params": config.get("lgb_params") or config.get("xgb_params"),
+        "model": model_name,
         "feature_count": len(columns),
-        "category_breakdown": cat_counts,
+        "has_nli": bool(nli_splits),
+        "has_stacking": meta_config is not None,
         "outcome_breakdown": outcome_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
     }
 
-    # Sort calls by probability descending
     all_calls.sort(key=lambda c: c["probability"], reverse=True)
 
     return {
@@ -201,7 +231,6 @@ def export():
             return;
           }"""
     )
-    # Patch loadCalls to filter from static data
     patched_index = patched_index.replace(
         "async loadCalls() {",
         """async loadCalls() {
@@ -214,10 +243,9 @@ def export():
             return;
           }"""
     )
-    # Inject data script before </body>
     patched_index = patched_index.replace("</body>", data_script + "\n</body>")
 
-    # Patch call.html: replace entire init with static lookup
+    # Patch call.html
     patched_call = call_html.replace(
         """async init() {
           const callId = window.location.pathname.split('/call/')[1];
@@ -239,18 +267,16 @@ def export():
     )
     patched_call = patched_call.replace("</body>", detail_script + "\n</body>")
 
-    # For static hosting, call detail uses ?id= param instead of /call/{id} path
+    # Static hosting adjustments
     patched_index = patched_index.replace(
         "window.location.href = '/call/' + call.call_id",
         "window.location.href = 'call.html?id=' + call.call_id"
     )
-    # Back link
     patched_call = patched_call.replace('href="/"', 'href="index.html"')
 
     (dist / "index.html").write_text(patched_index)
     (dist / "call.html").write_text(patched_call)
 
-    # Size report
     index_size = len(patched_index) / 1024
     call_size = len(patched_call) / 1024
     print(f"Exported to dist/")

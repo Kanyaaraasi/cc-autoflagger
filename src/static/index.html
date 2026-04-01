@@ -71,7 +71,7 @@
       <span style="color: var(--border)">│</span>
       <span class="hidden sm:inline">AUTOFLAGGER</span>
       <span class="hidden md:inline" style="color: var(--border)">│</span>
-      <span class="hidden md:inline" x-show="stats" x-text="stats?.model?.toUpperCase() + ' depth=' + (stats?.model_params?.max_depth || '?')"></span>
+      <span class="hidden md:inline" x-show="stats" x-text="stats?.model"></span>
       <span class="hidden lg:inline" style="color: var(--border)">│</span>
       <span class="hidden lg:inline" x-show="stats" x-text="stats?.feature_count + ' features'"></span>
       <span class="hidden md:inline" style="color: var(--border)">│</span>
@@ -117,22 +117,23 @@
     <!-- MIDDLE ROW: 3 panels -->
     <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 
-      <!-- CATEGORIES -->
+      <!-- NLI OVERVIEW -->
       <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Issue Categories</div>
-        <div class="space-y-2">
-          <template x-for="[cat, count] in Object.entries(stats?.category_breakdown || {})" :key="cat">
+        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">NLI Contradictions</div>
+        <div class="space-y-2" x-show="stats?.nli_summary">
+          <template x-for="[label, data] in Object.entries(stats?.nli_summary || {})" :key="label">
             <div>
               <div class="flex justify-between text-xs mb-0.5">
-                <span class="mono" style="color: var(--muted-foreground)" x-text="cat"></span>
-                <span class="mono font-bold" x-text="count"></span>
+                <span class="mono" style="color: var(--muted-foreground)" x-text="label"></span>
+                <span class="mono font-bold" x-text="data.count"></span>
               </div>
               <div class="h-1.5 w-full" style="background: var(--secondary)">
-                <div class="h-full bar-fill" :style="'width:' + (count / (stats?.flagged_calls || 1) * 100) + '%; background:' + (cat === 'audio_issue' ? 'var(--chart-4)' : cat === 'elevenlabs' ? 'var(--primary)' : 'var(--chart-1)')"></div>
+                <div class="h-full bar-fill" :style="'width:' + (data.count / (stats?.total_calls || 1) * 100) + '%; background:' + data.color"></div>
               </div>
             </div>
           </template>
         </div>
+        <div x-show="!stats?.nli_summary" class="text-xs" style="color: var(--muted-foreground)">Run nli-extract first</div>
       </div>
 
       <!-- OUTCOMES -->
@@ -224,7 +225,7 @@
               <th class="text-left py-1.5 px-3 font-medium">Outcome</th>
               <th class="text-right py-1.5 px-3 font-medium">Prob</th>
               <th class="text-center py-1.5 px-3 font-medium">Flag</th>
-              <th class="text-left py-1.5 px-3 font-medium">Category</th>
+              <th class="text-right py-1.5 px-3 font-medium">NLI</th>
               <th class="text-right py-1.5 px-3 font-medium">Dur</th>
               <th class="text-right py-1.5 px-3 font-medium">Comp</th>
               <th class="text-center py-1.5 px-3 font-medium">Split</th>
@@ -256,13 +257,9 @@
                   <span x-show="call.predicted_ticket" style="color: var(--destructive)" class="text-[10px]">&#11044;</span>
                   <span x-show="!call.predicted_ticket" style="color: var(--muted)" class="text-[10px]">&#9675;</span>
                 </td>
-                <td class="py-1.5 px-3 mono text-[10px]"
-                  :style="{
-                    audio_issue: 'color: var(--chart-4)',
-                    elevenlabs: 'color: var(--primary)',
-                    openai: 'color: var(--chart-1)',
-                  }[call.predicted_category] || 'color: var(--muted-foreground)'"
-                  x-text="call.predicted_category || '—'"></td>
+                <td class="py-1.5 px-3 text-right mono text-[10px]"
+                  :style="(call.nli_max_contradiction || 0) > 0.7 ? 'color: var(--destructive)' : (call.nli_max_contradiction || 0) > 0.3 ? 'color: var(--chart-4)' : 'color: var(--muted-foreground)'"
+                  x-text="call.nli_max_contradiction != null ? (call.nli_max_contradiction * 100).toFixed(0) + '%' : '—'"></td>
                 <td class="py-1.5 px-3 text-right mono text-[11px]" style="color: var(--muted-foreground)" x-text="call.call_duration + 's'"></td>
                 <td class="py-1.5 px-3 text-right mono text-[11px]"
                   :style="call.response_completeness < 0.5 ? 'color: var(--chart-4)' : 'color: var(--muted-foreground)'"

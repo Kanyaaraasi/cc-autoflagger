@@ -29,20 +29,40 @@ def pipeline():
     X_test[common_cols].to_parquet(OUTPUT_DIR / "X_test.parquet")
     log.info(f"Saved {len(common_cols)} features")
 
-    # Free NLI model and torch memory before training
-    pipe.nli_checker.unload()
-    del pipe
-    import gc, torch
-    gc.collect()
-    if hasattr(torch, 'mps') and torch.backends.mps.is_available():
-        torch.mps.empty_cache()
-
     log.info("STEP 3: Training and evaluating")
     train_and_evaluate()
 
     log.info("STEP 4: Generating submission")
     generate_submission()
     log.info("DONE")
+
+
+def nli_extract():
+    """Pre-compute NLI contradiction features for all splits."""
+    from .data_loader import load_all
+    from .signals.nli_checker import NLIChecker
+    from .config import OUTPUT_DIR
+    from .logger import get_logger
+
+    log = get_logger("nli")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    train, val, test = load_all()
+    checker = NLIChecker()
+    checker.fit(train)
+
+    for name, df in [("train", train), ("val", val), ("test", test)]:
+        log.info(f"Computing NLI features for {name} ({len(df)} calls)...")
+        features = checker.transform(df)
+        out_path = OUTPUT_DIR / f"nli_{name}.parquet"
+        features.to_parquet(out_path)
+        log.info(f"  Saved to {out_path} ({features.shape[1]} features)")
+
+
+def stack():
+    """Run stacking meta-learner: ML + NLI → final predictions."""
+    from .stack import stack_and_predict
+    stack_and_predict()
 
 
 def eda():
