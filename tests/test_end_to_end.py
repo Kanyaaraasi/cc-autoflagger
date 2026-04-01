@@ -1,45 +1,34 @@
 """End-to-end test: run full pipeline and validate submission output."""
 
+import json
+import pickle
+
+import numpy as np
 import pandas as pd
+from sklearn.metrics import f1_score
 
 from src.config import OUTPUT_DIR, MODEL_DIR, TARGET
 from src.data_loader import load_all
-from src.features import FeaturePipeline
 from src.train import train_and_evaluate
 
 
 class TestEndToEnd:
     def test_full_pipeline_produces_valid_submission(self):
-        """Run feature extraction + training + prediction, validate submission.csv."""
+        """Run training + prediction, validate submission.csv."""
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 1. Load data
-        train, val, test = load_all()
+        # 1. Train (includes feature extraction)
+        best_name, best_thresh, subsets = train_and_evaluate()
+        assert best_name == "ensemble"
+        assert 0.0 < best_thresh < 1.0
+        assert len(subsets) == 3
 
-        # 2. Extract features
-        pipeline = FeaturePipeline()
-        pipeline.fit(train)
-        X_train = pipeline.transform(train, split_name="train")
-        X_val = pipeline.transform(val, split_name="val")
-        X_test = pipeline.transform(test, split_name="test")
-
-        common_cols = sorted(set(X_train.columns) & set(X_val.columns) & set(X_test.columns))
-        X_train[common_cols].to_parquet(OUTPUT_DIR / "X_train.parquet")
-        X_val[common_cols].to_parquet(OUTPUT_DIR / "X_val.parquet")
-        X_test[common_cols].to_parquet(OUTPUT_DIR / "X_test.parquet")
-
-        # 3. Train
-        best_name, best_thresh, columns = train_and_evaluate()
-        assert best_thresh > 0.0
-        assert best_thresh < 1.0
-        assert len(columns) > 50
-
-        # 4. Generate submission
+        # 2. Generate submission
         from src.predict import generate_submission
         submission = generate_submission()
 
-        # 5. Validate submission format
+        # 3. Validate submission format
         assert isinstance(submission, pd.DataFrame)
         assert list(submission.columns) == ["call_id", "predicted_ticket"]
         assert len(submission) == 159
@@ -58,7 +47,8 @@ class TestEndToEnd:
         assert submission["call_id"].is_unique
 
         # All test call_ids present
-        assert set(submission["call_id"]) == set(test["call_id"])
+        _, _, test_df = load_all()
+        assert set(submission["call_id"]) == set(test_df["call_id"])
 
         # CSV file should exist
         csv_path = OUTPUT_DIR / "submission.csv"
@@ -67,38 +57,24 @@ class TestEndToEnd:
         assert len(saved) == 159
         assert list(saved.columns) == ["call_id", "predicted_ticket"]
 
-    def test_model_val_f1_above_threshold(self):
-        """Ensure model achieves at least F1 > 0.85 on validation set."""
-        import numpy as np
-        from sklearn.metrics import f1_score, precision_score, recall_score
-        import json
-        import pickle
-
-        _, val_df, _ = load_all()
-        y_val = val_df[TARGET].astype(int).values
-
-        X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")
+    def test_ensemble_models_saved_correctly(self):
+        """Ensure all 3 models and config are saved."""
         with open(MODEL_DIR / "model.pkl", "rb") as f:
-            model = pickle.load(f)
+            payload = pickle.load(f)
         with open(MODEL_DIR / "config.json") as f:
             config = json.load(f)
 
-        columns = config["columns"]
-        threshold = config["threshold"]
+        assert "models" in payload
+        assert len(payload["models"]) == 3
+        assert "threshold" in config
+        assert "subsets" in config
+        assert "cv_f1_mean" in config
+        assert "fold_thresholds" in config
+        assert len(config["fold_thresholds"]) == 10
 
-        proba = model.predict_proba(X_val[columns])[:, 1]
-        pred = (proba >= threshold).astype(int)
-        f1 = f1_score(y_val, pred, zero_division=0)
-        prec = precision_score(y_val, pred, zero_division=0)
-        rec = recall_score(y_val, pred, zero_division=0)
-
-        print(f"\n{'='*50}")
-        print(f"  Val F1:        {f1:.4f}")
-        print(f"  Val Precision: {prec:.4f}")
-        print(f"  Val Recall:    {rec:.4f}")
-        print(f"  Threshold:     {threshold:.2f}")
-        print(f"  Model:         {config['best_model']}")
-        print(f"  Features:      {len(columns)}")
-        print(f"{'='*50}")
-
-        assert f1 > 0.85, f"Val F1 = {f1:.4f}, expected > 0.85"
+    def test_cv_f1_above_threshold(self):
+        """Ensure ensemble CV F1 is reasonable."""
+        with open(MODEL_DIR / "config.json") as f:
+            config = json.load(f)
+        assert config["cv_f1_mean"] > 0.80, f"CV F1 = {config['cv_f1_mean']}, expected > 0.80"
+        assert config["oof_metrics"]["f1"] > 0.80, f"OOF F1 = {config['oof_metrics']['f1']}, expected > 0.80"

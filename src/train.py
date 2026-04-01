@@ -1,24 +1,25 @@
-"""Train models, tune thresholds, evaluate on validation set."""
+"""Train diverse ensemble, tune threshold via CV on combined train+val."""
 
 import json
 import pickle
-from itertools import product
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 from sklearn.model_selection import StratifiedKFold
-from xgboost import XGBClassifier
+from sklearn.preprocessing import StandardScaler
 from lightgbm import LGBMClassifier
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET
 from .data_loader import load_all
+from .features import FeaturePipeline, SUBSET_NUMERIC, SUBSET_TEXT_LIGHT, SUBSET_EMBEDDING
 from .logger import get_logger
 
 log = get_logger("train")
 
 
-def find_best_threshold(y_true, y_proba, metric="f1"):
+def find_best_threshold(y_true, y_proba):
     """Sweep thresholds to maximize F1."""
     best_thresh, best_score = 0.5, 0.0
     for thresh in np.arange(0.05, 0.95, 0.01):
@@ -30,241 +31,179 @@ def find_best_threshold(y_true, y_proba, metric="f1"):
     return best_thresh, best_score
 
 
-def find_precision_threshold(y_true, y_proba, min_recall=0.9):
-    """Find threshold that maximizes precision while keeping recall >= min_recall."""
-    best_thresh, best_prec = 0.5, 0.0
-    for thresh in np.arange(0.05, 0.95, 0.01):
-        y_pred = (y_proba >= thresh).astype(int)
-        rec = recall_score(y_true, y_pred, zero_division=0)
-        prec = precision_score(y_true, y_pred, zero_division=0)
-        if rec >= min_recall and prec > best_prec:
-            best_prec = prec
-            best_thresh = thresh
-    return best_thresh, best_prec
-
-
-def analyze_errors(y_true, y_proba, threshold, X, call_ids):
-    """Analyze false positives and false negatives."""
-    y_pred = (y_proba >= threshold).astype(int)
-
-    fp_mask = (y_pred == 1) & (y_true == 0)
-    fn_mask = (y_pred == 0) & (y_true == 1)
-
-    if fp_mask.sum() > 0:
-        log.info(f"\n--- FALSE POSITIVES ({fp_mask.sum()}) ---")
-        fp_indices = np.where(fp_mask)[0]
-        for idx in fp_indices:
-            cid = call_ids.iloc[idx] if hasattr(call_ids, 'iloc') else call_ids[idx]
-            prob = y_proba[idx]
-            log.info(f"  {cid[:12]}... proba={prob:.3f} (threshold={threshold:.2f})")
-            # Show top features for this call
-            row = X.iloc[idx]
-            top_feats = row[row != 0].abs().sort_values(ascending=False).head(5)
-            for feat, val in top_feats.items():
-                log.info(f"    {feat} = {val:.4f}")
-
-    if fn_mask.sum() > 0:
-        log.info(f"\n--- FALSE NEGATIVES ({fn_mask.sum()}) ---")
-        fn_indices = np.where(fn_mask)[0]
-        for idx in fn_indices:
-            cid = call_ids.iloc[idx] if hasattr(call_ids, 'iloc') else call_ids[idx]
-            prob = y_proba[idx]
-            log.info(f"  {cid[:12]}... proba={prob:.3f}")
-
-
-def grid_search_cv(X_train, y_train, scale_pos_weight):
-    """Grid search over XGBoost + LightGBM hyperparameters using CV."""
-    log.info("\n--- Grid Search (CV on train) ---")
-
-    param_grid = {
-        "max_depth": [3, 4, 5],
-        "learning_rate": [0.05, 0.1],
-        "n_estimators": [100, 200, 300],
+def _build_models(scale_pos_weight: float) -> dict:
+    """Create the 3 diverse models for the ensemble."""
+    return {
+        SUBSET_NUMERIC: {
+            "model": LogisticRegression(
+                C=1.0, class_weight="balanced", max_iter=1000, random_state=42,
+            ),
+            "scaler": StandardScaler(),
+        },
+        SUBSET_TEXT_LIGHT: {
+            "model": LGBMClassifier(
+                max_depth=2, num_leaves=4, n_estimators=150,
+                learning_rate=0.05, min_child_samples=10,
+                subsample=0.8, colsample_bytree=0.8,
+                scale_pos_weight=scale_pos_weight,
+                reg_alpha=1.0, reg_lambda=1.0,
+                random_state=42, verbose=-1,
+            ),
+            "scaler": None,
+        },
+        SUBSET_EMBEDDING: {
+            "model": LGBMClassifier(
+                max_depth=3, num_leaves=8, n_estimators=150,
+                learning_rate=0.05, min_child_samples=10,
+                subsample=0.8, colsample_bytree=0.8,
+                scale_pos_weight=scale_pos_weight,
+                reg_alpha=1.0, reg_lambda=1.0,
+                random_state=42, verbose=-1,
+            ),
+            "scaler": None,
+        },
     }
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    best_score, best_params, best_model_type = 0, {}, "xgb"
 
-    for depth, lr, n_est in product(
-        param_grid["max_depth"],
-        param_grid["learning_rate"],
-        param_grid["n_estimators"],
-    ):
-        # XGBoost
-        cv_scores = []
-        for tr_idx, te_idx in skf.split(X_train, y_train):
-            model = XGBClassifier(
-                n_estimators=n_est, max_depth=depth, learning_rate=lr,
-                scale_pos_weight=scale_pos_weight, subsample=0.8,
-                colsample_bytree=0.8, min_child_weight=3,
-                eval_metric="logloss", random_state=42,
-            )
-            model.fit(X_train.iloc[tr_idx], y_train[tr_idx], verbose=False)
-            proba = model.predict_proba(X_train.iloc[te_idx])[:, 1]
-            thresh, f1 = find_best_threshold(y_train[te_idx], proba)
-            cv_scores.append(f1)
-
-        mean_f1 = np.mean(cv_scores)
-        if mean_f1 > best_score:
-            best_score = mean_f1
-            best_params = {"max_depth": depth, "learning_rate": lr, "n_estimators": n_est}
-            best_model_type = "xgb"
-
-    log.info(f"Best XGB params: {best_params} → CV F1={best_score:.4f}")
-
-    # LightGBM search
-    lgb_best_score, lgb_best_params = 0, {}
-    for depth, lr, n_est in product([3, 4, 5], [0.05, 0.1], [100, 200, 300]):
-        cv_scores = []
-        for tr_idx, te_idx in skf.split(X_train, y_train):
-            model = LGBMClassifier(
-                n_estimators=n_est, max_depth=depth, learning_rate=lr,
-                scale_pos_weight=scale_pos_weight, subsample=0.8,
-                colsample_bytree=0.8, min_child_samples=5,
-                random_state=42, verbose=-1,
-            )
-            model.fit(X_train.iloc[tr_idx], y_train[tr_idx])
-            proba = model.predict_proba(X_train.iloc[te_idx])[:, 1]
-            thresh, f1 = find_best_threshold(y_train[te_idx], proba)
-            cv_scores.append(f1)
-
-        mean_f1 = np.mean(cv_scores)
-        if mean_f1 > lgb_best_score:
-            lgb_best_score = mean_f1
-            lgb_best_params = {"max_depth": depth, "learning_rate": lr, "n_estimators": n_est}
-
-    log.info(f"Best LGB params: {lgb_best_params} → CV F1={lgb_best_score:.4f}")
-
-    return best_params, lgb_best_params
+def _fit_predict_model(entry, X_train, y_train, X_test):
+    """Fit a single model and return test probabilities."""
+    scaler = entry["scaler"]
+    model = entry["model"]
+    if scaler is not None:
+        cols = X_train.columns
+        X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=cols, index=X_train.index)
+        X_test = pd.DataFrame(scaler.transform(X_test), columns=cols, index=X_test.index)
+    model.fit(X_train, y_train)
+    return model.predict_proba(X_test)[:, 1]
 
 
 def train_and_evaluate():
-    """Full training pipeline."""
+    """Full ensemble training pipeline with CV-averaged threshold."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-    X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")
-    X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")
-
+    # --- Load and combine train + val ---
     train_df, val_df, _ = load_all()
-    y_train = train_df[TARGET].astype(int).values
-    y_val = val_df[TARGET].astype(int).values
+    combined_df = pd.concat([train_df, val_df], ignore_index=True)
+    y_combined = combined_df[TARGET].astype(int).values
 
-    common_cols = sorted(set(X_train.columns) & set(X_val.columns))
-    X_train = X_train[common_cols]
-    X_val = X_val[common_cols]
-
-    neg, pos = (y_train == 0).sum(), (y_train == 1).sum()
+    neg, pos = (y_combined == 0).sum(), (y_combined == 1).sum()
     scale_pos_weight = neg / max(pos, 1)
-    log.info(f"Features: {len(common_cols)}")
-    log.info(f"Train: {X_train.shape[0]} rows, {pos} positive ({pos/len(y_train):.1%})")
-    log.info(f"Val: {X_val.shape[0]} rows, {y_val.sum()} positive ({y_val.mean():.1%})")
+    log.info(f"Combined: {len(combined_df)} rows, {pos} positive ({pos/len(y_combined):.1%})")
 
-    # --- Grid Search ---
-    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight)
+    # --- Extract features on combined data ---
+    log.info("Fitting feature pipeline on combined train+val...")
+    pipeline = FeaturePipeline()
+    pipeline.fit(combined_df)
 
-    # --- Train final models with best params ---
-    log.info("\n--- Training Final XGBoost ---")
-    xgb = XGBClassifier(
-        **xgb_params,
-        scale_pos_weight=scale_pos_weight, subsample=0.8,
-        colsample_bytree=0.8, min_child_weight=3,
-        eval_metric="logloss", random_state=42,
-    )
-    xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
-    xgb_val_proba = xgb.predict_proba(X_val)[:, 1]
+    X_combined = pipeline.transform(combined_df, split_name="combined")
+    X_combined = X_combined.fillna(0)
 
-    log.info("\n--- Training Final LightGBM ---")
-    lgb = LGBMClassifier(
-        **lgb_params,
-        scale_pos_weight=scale_pos_weight, subsample=0.8,
-        colsample_bytree=0.8, min_child_samples=5,
-        random_state=42, verbose=-1,
-    )
-    lgb.fit(X_train, y_train)
-    lgb_val_proba = lgb.predict_proba(X_val)[:, 1]
+    # Get feature subsets
+    subsets = pipeline.get_subset_columns(list(X_combined.columns))
+    for name, cols in subsets.items():
+        log.info(f"  Subset '{name}': {len(cols)} features")
 
-    # --- Ensemble (average probabilities) ---
-    ensemble_proba = 0.5 * xgb_val_proba + 0.5 * lgb_val_proba
+    # --- Also extract test features ---
+    _, _, test_df = load_all()
+    X_test_all = pipeline.transform(test_df, split_name="test")
+    X_test_all = X_test_all.fillna(0)
 
-    # --- Evaluate all three ---
-    for name, proba in [("XGBoost", xgb_val_proba), ("LightGBM", lgb_val_proba), ("Ensemble", ensemble_proba)]:
-        thresh, f1 = find_best_threshold(y_val, proba)
-        pred = (proba >= thresh).astype(int)
-        rec = recall_score(y_val, pred, zero_division=0)
-        prec = precision_score(y_val, pred, zero_division=0)
-        log.info(f"\n{name} (threshold={thresh:.2f}): F1={f1:.4f} Precision={prec:.4f} Recall={rec:.4f} Predicted={pred.sum()}")
+    # Align columns
+    for name in subsets:
+        subsets[name] = [c for c in subsets[name] if c in X_combined.columns and c in X_test_all.columns]
 
-    # --- Pick best model ---
-    results = {}
-    for name, proba in [("xgb", xgb_val_proba), ("lgb", lgb_val_proba), ("ensemble", ensemble_proba)]:
-        thresh, f1 = find_best_threshold(y_val, proba)
-        results[name] = {"f1": f1, "threshold": thresh, "proba": proba}
+    # --- 10-Fold CV for threshold estimation ---
+    log.info("\n--- 10-Fold CV for threshold estimation ---")
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    fold_thresholds = []
+    fold_f1s = []
+    oof_probas = np.zeros(len(y_combined))
 
-    best_name = max(results, key=lambda k: results[k]["f1"])
-    best_proba = results[best_name]["proba"]
-    best_thresh = results[best_name]["threshold"]
-    best_f1 = results[best_name]["f1"]
-    log.info(f"\n*** Best model: {best_name} with F1={best_f1:.4f} ***")
+    for fold, (tr_idx, te_idx) in enumerate(skf.split(X_combined, y_combined)):
+        models = _build_models(scale_pos_weight)
+        fold_probas = np.zeros(len(te_idx))
+        n_models = 0
 
-    # --- Detailed report ---
-    val_pred = (best_proba >= best_thresh).astype(int)
-    log.info(f"\n{classification_report(y_val, val_pred, target_names=['no_ticket', 'ticket'], zero_division=0)}")
+        for subset_name, cols in subsets.items():
+            X_tr = X_combined.iloc[tr_idx][cols]
+            X_te = X_combined.iloc[te_idx][cols]
+            y_tr = y_combined[tr_idx]
 
-    # --- Precision-aware threshold ---
-    prec_thresh, prec_score_val = find_precision_threshold(y_val, best_proba, min_recall=0.9)
-    prec_pred = (best_proba >= prec_thresh).astype(int)
-    prec_f1 = f1_score(y_val, prec_pred, zero_division=0)
-    prec_rec = recall_score(y_val, prec_pred, zero_division=0)
-    log.info(f"Precision-optimized (recall>=0.9): threshold={prec_thresh:.2f} F1={prec_f1:.4f} Precision={prec_score_val:.4f} Recall={prec_rec:.4f}")
+            proba = _fit_predict_model(models[subset_name], X_tr, y_tr, X_te)
+            fold_probas += proba
+            n_models += 1
 
-    # --- Error analysis ---
-    analyze_errors(y_val, best_proba, best_thresh, X_val, val_df["call_id"])
+        fold_probas /= n_models  # Average ensemble
+        oof_probas[te_idx] = fold_probas
 
-    # --- CV stability check ---
-    log.info("\n--- 5-Fold CV Stability ---")
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    cv_f1s = []
-    for fold, (tr_idx, te_idx) in enumerate(skf.split(X_train, y_train)):
-        xgb_cv = XGBClassifier(**xgb_params, scale_pos_weight=scale_pos_weight,
-                                subsample=0.8, colsample_bytree=0.8, min_child_weight=3,
-                                eval_metric="logloss", random_state=42)
-        xgb_cv.fit(X_train.iloc[tr_idx], y_train[tr_idx], verbose=False)
-        fold_proba = xgb_cv.predict_proba(X_train.iloc[te_idx])[:, 1]
-        fold_thresh, fold_f1 = find_best_threshold(y_train[te_idx], fold_proba)
-        cv_f1s.append(fold_f1)
-        log.info(f"  Fold {fold + 1}: F1={fold_f1:.4f} (threshold={fold_thresh:.2f})")
-    log.info(f"  Mean CV F1: {np.mean(cv_f1s):.4f} ± {np.std(cv_f1s):.4f}")
+        thresh, f1 = find_best_threshold(y_combined[te_idx], fold_probas)
+        fold_thresholds.append(thresh)
+        fold_f1s.append(f1)
+        log.info(f"  Fold {fold + 1}: F1={f1:.4f} threshold={thresh:.2f}")
 
-    # --- Feature importance ---
-    importance = pd.Series(xgb.feature_importances_, index=common_cols).sort_values(ascending=False)
-    log.info("\n--- Top 20 Features ---")
-    for feat, imp in importance.head(20).items():
-        log.info(f"  {feat}: {imp:.4f}")
+    median_threshold = float(np.median(fold_thresholds))
+    mean_f1 = float(np.mean(fold_f1s))
+    std_f1 = float(np.std(fold_f1s))
+    log.info(f"\n  CV F1: {mean_f1:.4f} ± {std_f1:.4f}")
+    log.info(f"  Fold thresholds: {[f'{t:.2f}' for t in fold_thresholds]}")
+    log.info(f"  Median threshold: {median_threshold:.2f}")
 
-    # --- Save best model ---
-    model_to_save = xgb if best_name == "xgb" else (lgb if best_name == "lgb" else {"xgb": xgb, "lgb": lgb})
+    # --- OOF evaluation at median threshold ---
+    oof_pred = (oof_probas >= median_threshold).astype(int)
+    oof_f1 = f1_score(y_combined, oof_pred, zero_division=0)
+    oof_prec = precision_score(y_combined, oof_pred, zero_division=0)
+    oof_rec = recall_score(y_combined, oof_pred, zero_division=0)
+    log.info(f"\n  OOF @ median threshold: F1={oof_f1:.4f} Precision={oof_prec:.4f} Recall={oof_rec:.4f}")
+    log.info(f"\n{classification_report(y_combined, oof_pred, target_names=['no_ticket', 'ticket'], zero_division=0)}")
+
+    # --- Train final models on ALL combined data ---
+    log.info("\n--- Training final models on all combined data ---")
+    final_models = _build_models(scale_pos_weight)
+    final_scalers = {}
+
+    for subset_name, cols in subsets.items():
+        X_all = X_combined[cols]
+        entry = final_models[subset_name]
+        scaler = entry["scaler"]
+        model = entry["model"]
+        if scaler is not None:
+            X_all = pd.DataFrame(scaler.fit_transform(X_all), columns=cols, index=X_all.index)
+            final_scalers[subset_name] = scaler
+        model.fit(X_all, y_combined)
+        log.info(f"  Trained {subset_name}: {type(model).__name__}")
+
+    # --- Save ---
+    save_payload = {
+        "models": {name: entry["model"] for name, entry in final_models.items()},
+        "scalers": final_scalers,
+    }
     with open(MODEL_DIR / "model.pkl", "wb") as f:
-        pickle.dump(model_to_save, f)
-    best_val_pred = (best_proba >= best_thresh).astype(int)
-    with open(MODEL_DIR / "config.json", "w") as f:
-        json.dump({
-            "threshold": best_thresh,
-            "columns": common_cols,
-            "best_model": best_name,
-            "xgb_params": xgb_params,
-            "lgb_params": lgb_params,
-            "val_metrics": {
-                "f1": round(f1_score(y_val, best_val_pred, zero_division=0), 4),
-                "precision": round(precision_score(y_val, best_val_pred, zero_division=0), 4),
-                "recall": round(recall_score(y_val, best_val_pred, zero_division=0), 4),
-            },
-            "cv_f1_mean": round(float(np.mean(cv_f1s)), 4),
-            "cv_f1_std": round(float(np.std(cv_f1s)), 4),
-        }, f)
+        pickle.dump(save_payload, f)
 
-    log.info(f"\nModel saved ({best_name}) to {MODEL_DIR}")
-    return best_name, best_thresh, common_cols
+    config = {
+        "threshold": median_threshold,
+        "subsets": {name: cols for name, cols in subsets.items()},
+        "best_model": "ensemble",
+        "cv_f1_mean": round(mean_f1, 4),
+        "cv_f1_std": round(std_f1, 4),
+        "oof_metrics": {
+            "f1": round(oof_f1, 4),
+            "precision": round(oof_prec, 4),
+            "recall": round(oof_rec, 4),
+        },
+        "fold_thresholds": [round(t, 4) for t in fold_thresholds],
+    }
+    with open(MODEL_DIR / "config.json", "w") as f:
+        json.dump(config, f, indent=2)
+
+    log.info(f"\nEnsemble saved to {MODEL_DIR}")
+
+    # --- Save features for predict.py ---
+    X_combined.to_parquet(OUTPUT_DIR / "X_train.parquet")
+    X_test_all.to_parquet(OUTPUT_DIR / "X_test.parquet")
+
+    return "ensemble", median_threshold, subsets
 
 
 def main():

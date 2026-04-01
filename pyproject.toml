@@ -15,6 +15,7 @@ dependencies = [
     # text / nlp signals
     "jiwer",
     "word2number",
+    "sentence-transformers",
     "fastapi>=0.135.2",
     "uvicorn>=0.42.0",
 ]

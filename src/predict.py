@@ -4,6 +4,7 @@ import json
 import pickle
 
 import pandas as pd
+import numpy as np
 
 from .config import OUTPUT_DIR, MODEL_DIR
 from .data_loader import load_all
@@ -16,28 +17,36 @@ def generate_submission():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     with open(MODEL_DIR / "model.pkl", "rb") as f:
-        model = pickle.load(f)
+        payload = pickle.load(f)
     with open(MODEL_DIR / "config.json") as f:
         config = json.load(f)
 
     threshold = config["threshold"]
-    columns = config["columns"]
-    best_model = config["best_model"]
+    subsets = config["subsets"]
+    models = payload["models"]
+    scalers = payload.get("scalers", {})
 
     X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")
-    X_test = X_test[columns]
-
     _, _, test_df = load_all()
 
-    # Get probabilities
-    if best_model == "ensemble":
-        xgb_proba = model["xgb"].predict_proba(X_test)[:, 1]
-        lgb_proba = model["lgb"].predict_proba(X_test)[:, 1]
-        proba = 0.5 * xgb_proba + 0.5 * lgb_proba
-    else:
-        proba = model.predict_proba(X_test)[:, 1]
+    # Average probabilities across ensemble
+    ensemble_proba = np.zeros(len(X_test))
+    n_models = 0
 
-    predictions = (proba >= threshold).astype(bool)
+    for subset_name, cols in subsets.items():
+        model = models[subset_name]
+        X_subset = X_test[cols]
+        if subset_name in scalers:
+            X_subset = pd.DataFrame(
+                scalers[subset_name].transform(X_subset),
+                columns=cols, index=X_subset.index,
+            )
+        proba = model.predict_proba(X_subset)[:, 1]
+        ensemble_proba += proba
+        n_models += 1
+
+    ensemble_proba /= n_models
+    predictions = (ensemble_proba >= threshold).astype(bool)
 
     submission = pd.DataFrame({
         "call_id": test_df["call_id"].values,
@@ -48,7 +57,7 @@ def generate_submission():
     submission.to_csv(out_path, index=False)
 
     log.info(f"Submission saved to {out_path}")
-    log.info(f"Model: {best_model} | Threshold: {threshold:.2f}")
+    log.info(f"Model: ensemble ({n_models} models) | Threshold: {threshold:.2f}")
     log.info(f"Predicted tickets: {predictions.sum()} / {len(predictions)} ({predictions.mean():.1%})")
 
     return submission

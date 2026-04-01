@@ -14,13 +14,28 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET
 from .data_loader import load_all, parse_responses
-from .signals import heuristics, transcript_diff, number_checker, flow_checker
-from .signals.category_predictor import predict_category
 
 app = FastAPI(title="CareCaller Auto-Flagger Dashboard")
 
 # --- Global state loaded on startup ---
 _state = {}
+
+
+def _ensemble_predict_proba(models, scalers, subsets, X):
+    """Average probabilities from ensemble models."""
+    proba = np.zeros(len(X))
+    n = 0
+    for subset_name, cols in subsets.items():
+        model = models[subset_name]
+        X_sub = X[cols]
+        if subset_name in scalers:
+            X_sub = pd.DataFrame(
+                scalers[subset_name].transform(X_sub),
+                columns=cols, index=X_sub.index,
+            )
+        proba += model.predict_proba(X_sub)[:, 1]
+        n += 1
+    return proba / n
 
 
 def _load_state():
@@ -30,32 +45,36 @@ def _load_state():
 
     # Load model + config
     with open(MODEL_DIR / "model.pkl", "rb") as f:
-        model = pickle.load(f)
+        payload = pickle.load(f)
     with open(MODEL_DIR / "config.json") as f:
         config = json.load(f)
 
-    columns = config["columns"]
+    models = payload["models"]
+    scalers = payload.get("scalers", {})
+    subsets = config["subsets"]
     threshold = config["threshold"]
+
+    # All columns needed
+    all_columns = sorted(set(c for cols in subsets.values() for c in cols))
 
     # Load data
     train, val, test = load_all()
 
     # Load precomputed features
-    X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[columns]
-    X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
-    X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
+    X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[all_columns]
+    X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[all_columns]
+
+    # Note: combined train+val is stored as X_train.parquet now
+    # For dashboard, we need per-split features. Re-extract from stored combined.
+    # Train portion is first len(train) rows, val portion is next len(val) rows.
+    X_train_split = X_train.iloc[:len(train)].reset_index(drop=True)
+    X_val_split = X_train.iloc[len(train):len(train)+len(val)].reset_index(drop=True)
 
     # Compute predictions for all splits
     splits = {}
-    for name, df, X in [("train", train, X_train), ("val", val, X_val), ("test", test, X_test)]:
-        proba = model.predict_proba(X)[:, 1]
+    for name, df, X in [("train", train, X_train_split), ("val", val, X_val_split), ("test", test, X_test)]:
+        proba = _ensemble_predict_proba(models, scalers, subsets, X)
         pred = proba >= threshold
-
-        # Category prediction
-        categories = []
-        for i, row in X.iterrows():
-            vn = str(df.iloc[i].get("validation_notes", "")) if pred[i] else ""
-            categories.append(predict_category(row, vn) if pred[i] else "")
 
         records = []
         for idx, (_, row) in enumerate(df.iterrows()):
@@ -69,10 +88,9 @@ def _load_state():
                 "turn_count": int(row["turn_count"]),
                 "probability": round(float(proba[idx]), 4),
                 "predicted_ticket": bool(pred[idx]),
-                "predicted_category": categories[idx],
+                "predicted_category": "",
                 "split": name,
             }
-            # Include actual label for train/val
             if name != "test":
                 rec["actual_ticket"] = bool(row[TARGET])
             records.append(rec)
@@ -81,26 +99,24 @@ def _load_state():
 
     # Val metrics
     y_val = val[TARGET].astype(int).values
-    val_proba = model.predict_proba(X_val)[:, 1]
+    val_proba = _ensemble_predict_proba(models, scalers, subsets, X_val_split)
     val_pred = (val_proba >= threshold).astype(int)
 
-    # Feature importance
-    importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
-
     _state.update({
-        "model": model,
+        "models": models,
+        "scalers": scalers,
+        "subsets": subsets,
         "config": config,
-        "columns": columns,
+        "columns": all_columns,
         "threshold": threshold,
         "splits": splits,
         "all_calls": splits["train"] + splits["val"] + splits["test"],
         "train_df": train,
         "val_df": val,
         "test_df": test,
-        "X_train": X_train,
-        "X_val": X_val,
+        "X_train": X_train_split,
+        "X_val": X_val_split,
         "X_test": X_test,
-        "importance": importance,
         "val_metrics": {
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
             "precision": round(precision_score(y_val, val_pred, zero_division=0), 4),
@@ -137,12 +153,6 @@ def get_stats():
     all_calls = s["all_calls"]
     flagged = [c for c in all_calls if c["predicted_ticket"]]
 
-    # Category breakdown
-    cat_counts = {}
-    for c in flagged:
-        cat = c["predicted_category"] or "unknown"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
-
     # Outcome breakdown
     outcome_counts = {}
     for c in all_calls:
@@ -160,9 +170,7 @@ def get_stats():
         "threshold": s["threshold"],
         "val_metrics": s["val_metrics"],
         "model": s["config"]["best_model"],
-        "model_params": s["config"].get("lgb_params") or s["config"].get("xgb_params"),
         "feature_count": len(s["columns"]),
-        "category_breakdown": cat_counts,
         "outcome_breakdown": outcome_counts,
         "splits": {
             "train": len(s["splits"]["train"]),
@@ -189,7 +197,6 @@ def get_calls(split: str = Query(default="all"), flagged_only: bool = Query(defa
 def get_call_detail(call_id: str):
     s = _state
 
-    # Find which split this call belongs to
     for split_name, df, X in [
         ("train", s["train_df"], s["X_train"]),
         ("val", s["val_df"], s["X_val"]),
@@ -201,12 +208,14 @@ def get_call_detail(call_id: str):
 
         row = match.iloc[0]
         idx = match.index[0]
-        feat_row = X.loc[idx]
+        # Map to feature index
+        feat_idx = df.index.get_loc(idx)
+        feat_row = X.iloc[feat_idx]
 
         # Probability
-        proba = float(s["model"].predict_proba(X.loc[[idx]])[0, 1])
+        X_single = X.iloc[[feat_idx]]
+        proba = float(_ensemble_predict_proba(s["models"], s["scalers"], s["subsets"], X_single)[0])
         predicted = proba >= s["threshold"]
-        category = predict_category(feat_row, str(row.get("validation_notes", ""))) if predicted else ""
 
         # Parse transcript into turns
         transcript = str(row.get("transcript_text", ""))
@@ -219,13 +228,6 @@ def get_call_detail(call_id: str):
 
         # Signal breakdown
         signals = {}
-
-        # Heuristic rules
-        rule_cols = [c for c in feat_row.index if c.startswith("rule_")]
-        signals["heuristics"] = {
-            "fired": {c: int(feat_row[c]) for c in rule_cols if feat_row[c] > 0},
-            "total_fired": int(feat_row.get("rule_count_fired", 0)),
-        }
 
         # Transcript diff
         signals["transcript_diff"] = {
@@ -255,11 +257,9 @@ def get_call_detail(call_id: str):
             "entropy": round(float(feat_row.get("outcome_pred_entropy", 0)), 4),
         }
 
-        # Text features (keyword flags)
-        kw_cols = [c for c in feat_row.index if c.startswith("vn_kw_")]
-        signals["text_features"] = {
-            "keywords_found": {c.replace("vn_kw_", ""): int(feat_row[c]) for c in kw_cols if feat_row[c] > 0},
-            "validation_notes_words": int(feat_row.get("vn_word_count", 0)),
+        # Embedding similarity
+        signals["embeddings"] = {
+            "vn_positive_similarity": round(float(feat_row.get("emb_vn_positive_similarity", 0)), 4),
         }
 
         # Top features for this call
@@ -277,7 +277,7 @@ def get_call_detail(call_id: str):
             "turn_count": int(row["turn_count"]),
             "probability": round(proba, 4),
             "predicted_ticket": bool(predicted),
-            "predicted_category": category,
+            "predicted_category": "",
             "validation_notes": str(row.get("validation_notes", "")),
             "transcript_turns": turns,
             "responses": responses,
@@ -295,11 +295,18 @@ def get_call_detail(call_id: str):
 
 @app.get("/api/importance")
 def get_importance(top: int = Query(default=30)):
-    imp = _state["importance"]
-    return [
-        {"feature": name, "importance": round(float(val), 4)}
-        for name, val in imp.head(top).items()
-    ]
+    # Use first LightGBM model's feature importances
+    s = _state
+    for subset_name in ["text_light", "embedding"]:
+        model = s["models"].get(subset_name)
+        if hasattr(model, "feature_importances_"):
+            cols = s["subsets"][subset_name]
+            imp = pd.Series(model.feature_importances_, index=cols).sort_values(ascending=False)
+            return [
+                {"feature": name, "importance": round(float(val), 4)}
+                for name, val in imp.head(top).items()
+            ]
+    return []
 
 
 def main():

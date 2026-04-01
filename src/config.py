@@ -56,6 +56,7 @@ DROP_COLS = LEAKAGE_COLS + ID_COLS + TEXT_COLS + [
     "patient_state",
     "attempted_at",
     "scheduled_at",
+    "day_of_week",
 ]
 
 # --- Categorical columns for encoding ---
@@ -64,8 +65,9 @@ CATEGORICAL_COLS = [
     "direction",
     "whisper_status",
     "cycle_status",
-    "day_of_week",
 ]
+
+# Dropped from categoricals: day_of_week (noise with small dataset)
 
 # --- The 14 health check-in questions (canonical) ---
 HEALTH_QUESTIONS = [

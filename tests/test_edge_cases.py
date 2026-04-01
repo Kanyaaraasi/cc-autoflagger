@@ -3,8 +3,8 @@
 import pandas as pd
 import numpy as np
 
-from src.signals import heuristics, transcript_diff, number_checker, flow_checker
-from src.signals.text_features import TextFeatureExtractor, _keyword_flags
+from src.signals import transcript_diff, number_checker, flow_checker
+from src.signals.text_features import TextFeatureExtractor
 from src.data_loader import parse_responses
 
 
@@ -46,62 +46,6 @@ def _make_row(**overrides):
     }
     defaults.update(overrides)
     return pd.DataFrame([defaults])
-
-
-# === HEURISTICS EDGE CASES ===
-
-class TestHeuristicsEdgeCases:
-    def test_empty_transcript(self):
-        df = _make_row(transcript_text="", outcome="completed", response_completeness=1.0)
-        result = heuristics.extract(df)
-        assert result.shape == (1, 12)
-        assert result["rule_medical_advice"].iloc[0] == 0
-
-    def test_nan_transcript(self):
-        df = _make_row(transcript_text=None, outcome="voicemail", response_completeness=0.0)
-        result = heuristics.extract(df)
-        assert result["rule_medical_advice"].iloc[0] == 0
-        assert result["rule_questions_asked_in_transcript"].iloc[0] == 0
-
-    def test_opted_out_high_completeness(self):
-        df = _make_row(outcome="opted_out", response_completeness=0.8)
-        result = heuristics.extract(df)
-        assert result["rule_optout_high_completeness"].iloc[0] == 1
-
-    def test_wrong_number_long_convo(self):
-        df = _make_row(outcome="wrong_number", turn_count=15)
-        result = heuristics.extract(df)
-        assert result["rule_wrongnum_long_convo"].iloc[0] == 1
-
-    def test_wrong_number_short_convo_no_flag(self):
-        df = _make_row(outcome="wrong_number", turn_count=4)
-        result = heuristics.extract(df)
-        assert result["rule_wrongnum_long_convo"].iloc[0] == 0
-
-    def test_voicemail_no_flags(self):
-        df = _make_row(
-            outcome="voicemail",
-            response_completeness=0.0,
-            answered_count=0,
-            whisper_mismatch_count=0,
-            form_submitted=False,
-            transcript_text="[AGENT]: Please call us back.",
-        )
-        result = heuristics.extract(df)
-        assert result["rule_any_fired"].iloc[0] == 0
-
-    def test_all_rules_can_fire_simultaneously(self):
-        df = _make_row(
-            outcome="completed",
-            response_completeness=0.3,
-            whisper_mismatch_count=2,
-            whisper_status="skipped",
-            form_submitted=False,
-            answered_count=3,
-            transcript_text="[AGENT]: I recommend you should take aspirin. feeling overall weight",
-        )
-        result = heuristics.extract(df)
-        assert result["rule_count_fired"].iloc[0] >= 3
 
 
 # === TRANSCRIPT DIFF EDGE CASES ===
@@ -157,7 +101,6 @@ class TestNumberCheckerEdgeCases:
         assert result["num_implausible"].iloc[0] == 0
 
     def test_weight_at_boundary(self):
-        """Weight of exactly 50 lbs (lower boundary) should be plausible."""
         df = _make_row(
             responses_json='[{"question": "What\'s your current weight in pounds?", "answer": "50"}]',
             transcript_text="[AGENT]: current weight? [USER]: 50",
@@ -166,7 +109,6 @@ class TestNumberCheckerEdgeCases:
         assert result["num_implausible"].iloc[0] == 0
 
     def test_weight_below_boundary(self):
-        """Weight of 10 lbs should be implausible."""
         df = _make_row(
             responses_json='[{"question": "What\'s your current weight in pounds?", "answer": "10"}]',
             transcript_text="[AGENT]: current weight? [USER]: 10",
@@ -175,7 +117,6 @@ class TestNumberCheckerEdgeCases:
         assert result["num_implausible"].iloc[0] >= 1
 
     def test_transposition_detection(self):
-        """'216' vs '261' should be caught as transposition."""
         df = _make_row(
             responses_json='[{"question": "What\'s your current weight in pounds?", "answer": "216"}]',
             transcript_text="[AGENT]: current weight? [USER]: 261",
@@ -202,33 +143,25 @@ class TestFlowCheckerEdgeCases:
     def test_single_turn(self):
         df = _make_row(transcript_text="[AGENT]: Hello")
         result = flow_checker.extract(df)
-        assert result["flow_missing_states"].iloc[0] > 10  # most states missing
+        assert result["flow_missing_states"].iloc[0] > 10
 
 
 # === TEXT FEATURES EDGE CASES ===
 
 class TestTextFeaturesEdgeCases:
-    def test_keyword_flags_empty_notes(self):
-        flags = _keyword_flags("")
-        assert all(v == 0 for v in flags.values())
+    def test_empty_validation_notes(self):
+        df = _make_row(validation_notes="")
+        ext = TextFeatureExtractor()
+        ext.fit(df)
+        result = ext.transform(df)
+        assert result["vn_word_count"].iloc[0] == 0
 
-    def test_keyword_flags_nan(self):
-        flags = _keyword_flags(float("nan"))
-        assert all(v == 0 for v in flags.values())
-
-    def test_keyword_flags_all_keywords(self):
-        text = "mismatch error skipped incorrect missing medical advice discrepancy wrong miscategorized violated guardrail incomplete contradicts differs never asked not asked fabricated"
-        flags = _keyword_flags(text)
-        assert flags["vn_kw_mismatch"] == 1
-        assert flags["vn_kw_error"] == 1
-        assert flags["vn_kw_medical_advice"] == 1
-        assert flags["vn_kw_fabricated"] == 1
-
-    def test_keyword_flags_case_insensitive(self):
-        flags = _keyword_flags("MISMATCH Error SKIPPED")
-        assert flags["vn_kw_mismatch"] == 1
-        assert flags["vn_kw_error"] == 1
-        assert flags["vn_kw_skipped"] == 1
+    def test_nan_validation_notes(self):
+        df = _make_row(validation_notes=None)
+        ext = TextFeatureExtractor()
+        ext.fit(df)
+        result = ext.transform(df)
+        assert result["vn_word_count"].iloc[0] == 0
 
 
 # === PARSE RESPONSES EDGE CASES ===
@@ -263,7 +196,6 @@ class TestThresholdEdgeCases:
         y_true = np.array([0, 0, 1, 1])
         y_proba = np.array([0.5, 0.5, 0.5, 0.5])
         thresh, f1 = find_best_threshold(y_true, y_proba)
-        # At threshold <= 0.5 all are predicted positive
         assert isinstance(thresh, float)
         assert isinstance(f1, float)
 
@@ -273,12 +205,3 @@ class TestThresholdEdgeCases:
         y_proba = np.array([0.8])
         thresh, f1 = find_best_threshold(y_true, y_proba)
         assert f1 > 0
-
-    def test_precision_threshold_impossible_recall(self):
-        """If min_recall can't be met, returns defaults."""
-        from src.train import find_precision_threshold
-        y_true = np.array([0, 0, 0, 1])
-        y_proba = np.array([0.9, 0.8, 0.7, 0.1])  # positive has lowest prob
-        thresh, prec = find_precision_threshold(y_true, y_proba, min_recall=1.0)
-        # Only way to get recall=1.0 is threshold <= 0.1, but precision will be low
-        assert isinstance(thresh, float)

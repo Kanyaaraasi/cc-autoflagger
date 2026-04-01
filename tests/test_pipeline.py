@@ -16,7 +16,7 @@ class TestFeaturePipeline:
         X = pipeline.transform(train, split_name="train")
         assert isinstance(X, pd.DataFrame)
         assert len(X) == len(train)
-        assert X.shape[1] > 50  # should have many features
+        assert X.shape[1] > 20  # should have many features
 
     def test_no_leakage_columns(self):
         train, _, _ = load_all()
@@ -51,6 +51,35 @@ class TestFeaturePipeline:
         state_cols = [c for c in X.columns if "patient_state" in c]
         assert len(state_cols) == 0, f"patient_state features found: {state_cols}"
 
+    def test_no_hardcoded_rules(self):
+        """No hardcoded heuristic rule features."""
+        train, _, _ = load_all()
+        pipeline = FeaturePipeline()
+        pipeline.fit(train)
+        X = pipeline.transform(train)
+        rule_cols = [c for c in X.columns if c.startswith("rule_")]
+        assert len(rule_cols) == 0, f"Hardcoded rule features found: {rule_cols}"
+
+    def test_no_tfidf_or_keywords(self):
+        """No TF-IDF or keyword flag features."""
+        train, _, _ = load_all()
+        pipeline = FeaturePipeline()
+        pipeline.fit(train)
+        X = pipeline.transform(train)
+        tfidf_cols = [c for c in X.columns if c.startswith("tfidf_")]
+        kw_cols = [c for c in X.columns if c.startswith("vn_kw_")]
+        assert len(tfidf_cols) == 0, f"TF-IDF features found: {tfidf_cols}"
+        assert len(kw_cols) == 0, f"Keyword features found: {kw_cols}"
+
+    def test_has_embedding_features(self):
+        """Should have semantic embedding features."""
+        train, _, _ = load_all()
+        pipeline = FeaturePipeline()
+        pipeline.fit(train)
+        X = pipeline.transform(train)
+        emb_cols = [c for c in X.columns if c.startswith("emb_")]
+        assert len(emb_cols) > 0, "No embedding features found"
+
     def test_all_numeric(self):
         train, _, _ = load_all()
         pipeline = FeaturePipeline()
@@ -76,8 +105,24 @@ class TestFeaturePipeline:
         X_val = pipeline.transform(val)
         X_test = pipeline.transform(test)
         common = set(X_train.columns) & set(X_val.columns) & set(X_test.columns)
-        # At least 90% overlap
         assert len(common) / max(len(X_train.columns), 1) > 0.9
+
+    def test_feature_subsets(self):
+        """Feature subsets should be valid and non-overlapping in purpose."""
+        train, _, _ = load_all()
+        pipeline = FeaturePipeline()
+        pipeline.fit(train)
+        X = pipeline.transform(train)
+        subsets = pipeline.get_subset_columns(list(X.columns))
+        assert "numeric" in subsets
+        assert "text_light" in subsets
+        assert "embedding" in subsets
+        # Each subset should have columns
+        for name, cols in subsets.items():
+            assert len(cols) > 0, f"Empty subset: {name}"
+            # All cols should exist in X
+            for c in cols:
+                assert c in X.columns, f"Subset '{name}' has unknown column: {c}"
 
     def test_transform_before_fit_raises(self):
         pipeline = FeaturePipeline()
@@ -111,10 +156,3 @@ class TestThresholdTuning:
         y_proba = np.array([0.1, 0.2, 0.8, 0.9])
         thresh, f1 = find_best_threshold(y_true, y_proba)
         assert f1 == 1.0
-
-    def test_precision_threshold(self):
-        from src.train import find_precision_threshold
-        y_true = np.array([0, 0, 0, 1, 1, 1])
-        y_proba = np.array([0.1, 0.3, 0.5, 0.6, 0.8, 0.9])
-        thresh, prec = find_precision_threshold(y_true, y_proba, min_recall=0.66)
-        assert prec >= 0.8

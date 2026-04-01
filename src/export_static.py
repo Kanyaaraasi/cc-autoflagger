@@ -8,41 +8,61 @@ import json
 import pickle
 import re
 
+import numpy as np
 import pandas as pd
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET, PROJECT_ROOT
 from .data_loader import load_all
-from .signals.category_predictor import predict_category
 from sklearn.metrics import f1_score, precision_score, recall_score
+
+
+def _ensemble_predict_proba(models, scalers, subsets, X):
+    """Average probabilities from ensemble models."""
+    proba = np.zeros(len(X))
+    n = 0
+    for subset_name, cols in subsets.items():
+        model = models[subset_name]
+        X_sub = X[cols]
+        if subset_name in scalers:
+            X_sub = pd.DataFrame(
+                scalers[subset_name].transform(X_sub),
+                columns=cols, index=X_sub.index,
+            )
+        proba += model.predict_proba(X_sub)[:, 1]
+        n += 1
+    return proba / n
 
 
 def build_api_data():
     """Build all API response data without running the server."""
     with open(MODEL_DIR / "model.pkl", "rb") as f:
-        model = pickle.load(f)
+        payload = pickle.load(f)
     with open(MODEL_DIR / "config.json") as f:
         config = json.load(f)
 
-    columns = config["columns"]
+    models = payload["models"]
+    scalers = payload.get("scalers", {})
+    subsets = config["subsets"]
     threshold = config["threshold"]
+    all_columns = sorted(set(c for cols in subsets.values() for c in cols))
+
     train, val, test = load_all()
 
-    X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[columns]
-    X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
-    X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
+    X_combined = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[all_columns]
+    X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[all_columns]
+
+    X_train_split = X_combined.iloc[:len(train)].reset_index(drop=True)
+    X_val_split = X_combined.iloc[len(train):len(train)+len(val)].reset_index(drop=True)
 
     # Build calls data for all splits
     all_calls = []
     call_details = {}
 
-    for name, df, X in [("train", train, X_train), ("val", val, X_val), ("test", test, X_test)]:
-        proba = model.predict_proba(X)[:, 1]
+    for name, df, X in [("train", train, X_train_split), ("val", val, X_val_split), ("test", test, X_test)]:
+        proba = _ensemble_predict_proba(models, scalers, subsets, X)
         pred = proba >= threshold
 
         for idx, (_, row) in enumerate(df.iterrows()):
-            vn = str(row.get("validation_notes", ""))
-            cat = predict_category(X.iloc[idx], vn) if pred[idx] else ""
-
             call = {
                 "call_id": row["call_id"],
                 "outcome": row["outcome"],
@@ -53,7 +73,7 @@ def build_api_data():
                 "turn_count": int(row["turn_count"]),
                 "probability": round(float(proba[idx]), 4),
                 "predicted_ticket": bool(pred[idx]),
-                "predicted_category": cat,
+                "predicted_category": "",
                 "split": name,
             }
             if name != "test":
@@ -73,19 +93,15 @@ def build_api_data():
             except Exception:
                 pass
 
-            rule_cols = {c: int(feat_row[c]) for c in feat_row.index if c.startswith("rule_") and feat_row[c] > 0}
-            kw_cols = {c.replace("vn_kw_", ""): int(feat_row[c]) for c in feat_row.index if c.startswith("vn_kw_") and feat_row[c] > 0}
-
             nonzero = feat_row[feat_row != 0].abs().sort_values(ascending=False)
             top_features = [{"name": k, "value": round(float(feat_row[k]), 4)} for k in nonzero.head(20).index]
 
             detail = {
                 **call,
-                "validation_notes": vn,
+                "validation_notes": str(row.get("validation_notes", "")),
                 "transcript_turns": turns,
                 "responses": responses,
                 "signals": {
-                    "heuristics": {"fired": rule_cols, "total_fired": int(feat_row.get("rule_count_fired", 0))},
                     "transcript_diff": {
                         "wer": round(float(feat_row.get("diff_wer", 0)), 4),
                         "cer": round(float(feat_row.get("diff_cer", 0)), 4),
@@ -105,7 +121,9 @@ def build_api_data():
                         "disagreement": int(feat_row.get("outcome_disagreement", 0)),
                         "confidence": round(float(feat_row.get("outcome_pred_confidence", 0)), 4),
                     },
-                    "text_features": {"keywords_found": kw_cols},
+                    "embeddings": {
+                        "vn_positive_similarity": round(float(feat_row.get("emb_vn_positive_similarity", 0)), 4),
+                    },
                 },
                 "top_features": top_features,
             }
@@ -113,19 +131,18 @@ def build_api_data():
 
     # Val metrics
     y_val = val[TARGET].astype(int).values
-    val_proba = model.predict_proba(X_val)[:, 1]
+    val_proba = _ensemble_predict_proba(models, scalers, subsets, X_val_split)
     val_pred = (val_proba >= threshold).astype(int)
 
-    # Feature importance
-    importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
-    importance_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in importance.head(30).items()]
-
-    # Category breakdown
-    flagged = [c for c in all_calls if c["predicted_ticket"]]
-    cat_counts = {}
-    for c in flagged:
-        cat = c["predicted_category"] or "unknown"
-        cat_counts[cat] = cat_counts.get(cat, 0) + 1
+    # Feature importance from first LightGBM model
+    importance_list = []
+    for subset_name in ["text_light", "embedding"]:
+        model = models.get(subset_name)
+        if hasattr(model, "feature_importances_"):
+            cols = subsets[subset_name]
+            imp = pd.Series(model.feature_importances_, index=cols).sort_values(ascending=False)
+            importance_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
+            break
 
     # Outcome breakdown
     outcome_counts = {}
@@ -136,6 +153,8 @@ def build_api_data():
         outcome_counts[o]["total"] += 1
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
+
+    flagged = [c for c in all_calls if c["predicted_ticket"]]
 
     stats = {
         "total_calls": len(all_calls),
@@ -148,14 +167,11 @@ def build_api_data():
             "recall": round(recall_score(y_val, val_pred, zero_division=0), 4),
         },
         "model": config["best_model"],
-        "model_params": config.get("lgb_params") or config.get("xgb_params"),
-        "feature_count": len(columns),
-        "category_breakdown": cat_counts,
+        "feature_count": len(all_columns),
         "outcome_breakdown": outcome_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
     }
 
-    # Sort calls by probability descending
     all_calls.sort(key=lambda c: c["probability"], reverse=True)
 
     return {

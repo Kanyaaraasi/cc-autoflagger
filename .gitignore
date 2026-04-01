@@ -17,3 +17,6 @@ models/
 outputs/
 
 .pytest_cache
+.DS_store
+
+.claude
