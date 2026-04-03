@@ -5,7 +5,7 @@ import numpy as np
 
 from .config import DROP_COLS, CATEGORICAL_COLS, OUTPUT_DIR
 from .logger import get_logger
-from .signals import heuristics, transcript_diff, number_checker, flow_checker
+from .signals import heuristics, transcript_diff, number_checker, flow_checker, response_checker
 from .signals.text_features import TextFeatureExtractor
 from .signals.outcome_predictor import OutcomePredictor
 
@@ -55,7 +55,10 @@ class FeaturePipeline:
         log.info(f"{prefix}Extracting outcome predictor signals...")
         outcome = self.outcome_predictor.transform(df)
 
-        parts = [structured, heur, diff, nums, flow, text, outcome]
+        log.info(f"{prefix}Extracting response checker signals...")
+        resp = response_checker.extract(df)
+
+        parts = [structured, heur, diff, nums, flow, text, outcome, resp]
 
         # Load pre-computed NLI features if available
         if split_name:

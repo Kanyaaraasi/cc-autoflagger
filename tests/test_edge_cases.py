@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 
-from src.signals import heuristics, transcript_diff, number_checker, flow_checker
+from src.signals import heuristics, transcript_diff, number_checker, flow_checker, response_checker
 from src.signals.text_features import TextFeatureExtractor, _keyword_flags
 from src.data_loader import parse_responses
 
@@ -253,6 +253,69 @@ class TestParseResponsesEdgeCases:
     def test_nested_quotes(self):
         result = parse_responses('[{"question": "How?", "answer": "I\'m fine"}]')
         assert "fine" in result[0]["answer"]
+
+
+# === RESPONSE CHECKER EDGE CASES ===
+
+class TestResponseCheckerEdgeCases:
+    def test_empty_responses(self):
+        df = _make_row(responses_json="[]", transcript_text="[AGENT]: Hello")
+        result = response_checker.extract(df)
+        assert result["resp_not_in_transcript"].iloc[0] == 0.0
+        assert result["resp_empty_count"].iloc[0] == 0
+
+    def test_nan_responses(self):
+        df = _make_row(responses_json=None, transcript_text="[AGENT]: Hello")
+        result = response_checker.extract(df)
+        assert result["resp_not_in_transcript"].iloc[0] == 0.0
+
+    def test_all_empty_answers(self):
+        df = _make_row(
+            responses_json='[{"question": "Q1", "answer": ""}, {"question": "Q2", "answer": ""}]',
+            transcript_text="[AGENT]: Hello",
+        )
+        result = response_checker.extract(df)
+        assert result["resp_empty_count"].iloc[0] == 2
+        assert result["resp_binary_ratio"].iloc[0] == 0.0
+
+    def test_all_binary_answers(self):
+        df = _make_row(
+            responses_json='[{"question": "Q1", "answer": "Yes"}, {"question": "Q2", "answer": "No"}, {"question": "Q3", "answer": "Yes"}]',
+            transcript_text="[AGENT]: Q1? [USER]: Yes [AGENT]: Q2? [USER]: No [AGENT]: Q3? [USER]: Yes",
+        )
+        result = response_checker.extract(df)
+        assert result["resp_binary_ratio"].iloc[0] == 1.0
+
+    def test_answer_not_in_transcript(self):
+        """Answer exists in response but NOT in transcript — fabrication signal."""
+        df = _make_row(
+            responses_json='[{"question": "What is your weight?", "answer": "210 pounds"}]',
+            transcript_text="[AGENT]: What is your weight? [USER]: I don't know",
+            answered_count=1,
+            call_duration=60,
+            user_word_count=10,
+        )
+        result = response_checker.extract(df)
+        assert result["resp_not_in_transcript"].iloc[0] > 0.0
+
+    def test_answer_in_transcript(self):
+        """Answer matches transcript — clean."""
+        df = _make_row(
+            responses_json='[{"question": "What is your weight?", "answer": "210 pounds"}]',
+            transcript_text="[AGENT]: What is your weight? [USER]: 210 pounds",
+            answered_count=1,
+            call_duration=60,
+            user_word_count=10,
+        )
+        result = response_checker.extract(df)
+        assert result["resp_not_in_transcript"].iloc[0] == 0.0
+
+    def test_zero_answered_count(self):
+        """Division by zero safety."""
+        df = _make_row(answered_count=0, call_duration=60, user_word_count=0)
+        result = response_checker.extract(df)
+        assert result["resp_words_per_answered"].iloc[0] == 0.0
+        assert result["resp_duration_per_answered"].iloc[0] == 60.0
 
 
 # === THRESHOLD EDGE CASES ===

@@ -16,9 +16,9 @@ About **9% of calls** have these issues and need human review. This tool **autom
 
 ## How It Works (Plain English)
 
-### Step 1: Look at each call from 7 different angles
+### Step 1: Look at each call from 8 different angles
 
-Think of it like 7 different inspectors, each checking for something specific:
+Think of it like 8 different inspectors, each checking for something specific:
 
 | Inspector | What it checks | Example |
 |-----------|---------------|---------|
@@ -29,16 +29,21 @@ Think of it like 7 different inspectors, each checking for something specific:
 | **Text Analysis** | What do the validation notes say? | Notes mention "error" or "mismatch" |
 | **Outcome Predictor** | Does the label match the conversation? | Transcript sounds like opt-out, but labeled "completed" |
 | **Basic Stats** | Call duration, word counts, etc. | Unusually short call marked as completed |
+| **Response Checker** | Do recorded answers match the transcript? | Answer says "yes" but that word never appears in transcript |
 
 Each inspector produces a set of numbers (features) describing what it found.
 
 ### Step 2: Feed all findings into a machine learning model
 
-All 135 numbers from the 7 inspectors go into a **LightGBM model** (a type of decision tree ensemble). The model learned from 689 example calls where we know the right answer.
+All 146 numbers from the 8 inspectors go into a **LightGBM model** (a type of decision tree ensemble). The model learned from 689 example calls where we know the right answer.
 
-### Step 3: The model decides: flag or not?
+### Step 3: NLI contradiction detection + stacking
 
-The model outputs a probability (0-100%) that the call needs review. If it's above 35%, we flag it.
+A **DeBERTa NLI model** checks for logical contradictions between validation notes and structured fields (e.g., notes say "all 14 questions asked" but only 11 were answered). These NLI scores, along with 8 context features, feed into a **LogisticRegression meta-learner** that combines ML predictions with NLI signals.
+
+### Step 4: The model decides: flag or not?
+
+The meta-learner outputs a final probability. If it's above the blended threshold (0.69, auto-selected from 40% val + 60% CV), we flag it.
 
 ## Results
 
@@ -47,7 +52,11 @@ On 144 validation calls (where we know the answer):
 - **Zero false alarms** (100% precision)
 - **F1 score: 1.000** (perfect on validation set)
 
-On the 159 test calls: flagged **17 calls** (10.7%) for review.
+On the 159 test calls: flagged **18 calls** (11.3%) for review.
+
+Leaderboard scores:
+- **Private F1: 1.000**
+- **Public F1: 1.000**
 
 ## Quick Start
 
@@ -55,22 +64,29 @@ On the 159 test calls: flagged **17 calls** (10.7%) for review.
 # Install dependencies
 uv sync
 
-# Run everything (extract features → train model → generate predictions)
+# Run full pipeline (extract features → train model → NLI → stack → predict)
 uv run pipeline
+uv run nli-extract
+uv run stack
 
 # Output: outputs/submission.csv
 ```
 
-That's it. Takes about 30 seconds.
+The base pipeline takes about 30 seconds. NLI extraction adds ~44 seconds (GPU/MPS) or ~2 minutes (CPU).
 
 ### All Commands
 
 ```bash
 uv run pipeline     # Full pipeline: extract → train → predict
+uv run nli-extract  # Extract NLI contradiction scores (DeBERTa)
+uv run stack        # Stacking meta-learner (ML + NLI → final submission)
+uv run stack --threshold 0.5  # Manual threshold override
 uv run eda          # Explore the data (stats, distributions)
 uv run extract      # Extract features only (saves to outputs/)
 uv run train        # Train model only (saves to models/)
 uv run predict      # Generate submission.csv from trained model
+uv run dashboard    # Launch interactive dashboard (includes response checker signals)
+uv run export-static  # Export static dashboard build
 ```
 
 ### Run Tests
@@ -97,13 +113,20 @@ carecaller-ticket/
 │   ├── logger.py                   # Logging setup (console + file)
 │   ├── eda.py                      # Exploratory data analysis
 │   │
-│   └── signals/                    # The 7 "inspectors"
+│   ├── stack.py                    # Stacking meta-learner (ML + NLI)
+│   ├── synthetic.py                # Synthetic data generation
+│   ├── app.py                      # Dashboard app
+│   ├── export_static.py            # Static dashboard export
+│   │
+│   └── signals/                    # The 8 "inspectors"
 │       ├── heuristics.py           # Rule-based flags (10 rules)
 │       ├── transcript_diff.py      # Compare two transcripts (WER)
 │       ├── number_checker.py       # Validate health numbers
 │       ├── flow_checker.py         # Check conversation structure
 │       ├── text_features.py        # Analyze validation notes
-│       └── outcome_predictor.py    # Predict outcome independently
+│       ├── outcome_predictor.py    # Predict outcome independently
+│       ├── response_checker.py     # Verify answers against transcript
+│       └── nli_checker.py          # NLI contradiction detection (DeBERTa)
 │
 ├── tests/                          # 79 tests
 │   ├── conftest.py                 # Test fixtures (sample calls)
@@ -149,15 +172,18 @@ The `validation_notes` field is written by an upstream AI system *after* the cal
 ### On the perfect validation score
 
 A perfect F1 score on validation sounds too good to be true. We checked:
-- Cross-validation across 5 different train splits: F1 = 0.94 (still strong, not perfect)
+- Cross-validation across 5 different train splits: Base CV F1 = 0.9599 +/- 0.036 (strong and stable)
+- Stacked CV F1 = 0.9739 +/- 0.021
 - Without validation_notes: F1 = 0.95
 - The issues are genuinely distinctive — bad calls have clear patterns
 
 ### What we tried and removed
 
 - **LLM-as-judge**: Used GPT-OSS via Groq to evaluate each call. Over-flagged everything. Removed.
-- **NLI contradiction checker**: Would compare transcript against recorded answers using a language model. Too slow (45+ min). Removed.
-- Both added complexity without improving the score.
+
+### Key innovation: NLI stacking
+
+The NLI contradiction checker was initially considered too slow but was successfully implemented using DeBERTa (`cross-encoder/nli-deberta-v3-base`). It detects logical contradictions between validation notes and structured fields. Combined with the base ML model via a stacking meta-learner with 15 features (ML probability + 6 NLI scores + 8 context features), this pushed the leaderboard score from 0.9333 to 1.000. See `docs/DESIGN_DECISIONS.md` for details.
 
 ## Submission Format
 

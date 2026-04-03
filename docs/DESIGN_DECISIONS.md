@@ -6,7 +6,7 @@ This document captures every approach we considered for the Call Quality Auto-Fl
 
 ## The Problem
 
-Binary classification on 992 calls (~9% positive rate, 59 training positives). Private leaderboard target: F1 = 1.0. Our best score: **0.9333** — missing 1-2 subtle calls where structured features can't capture logical contradictions in the text.
+Binary classification on 992 calls (~9% positive rate, 59 training positives). Private leaderboard target: F1 = 1.0. Final score: **Private F1 = 1.000, Public F1 = 1.000** -- achieved via NLI stacking with a wider meta-learner.
 
 ---
 
@@ -99,9 +99,11 @@ Binary classification on 992 calls (~9% positive rate, 59 training positives). P
 
 ---
 
-## Approach 4: NLI Zero-Shot Contradiction Detection (chosen)
+## Approach 4: NLI Zero-Shot Contradiction Detection (chosen, implemented)
 
-**What**: Use `cross-encoder/nli-deberta-v3-base` (~370MB) to detect contradictions between `validation_notes` and structured fields. Pre-compute 6 NLI features per call, then stack with ML predictions via a LogReg meta-learner.
+**What**: Use `cross-encoder/nli-deberta-v3-base` (~370MB) to detect contradictions between `validation_notes` and structured fields. Pre-compute 6 NLI features per call, then stack with ML predictions via a LogReg meta-learner with 15 features (wider meta-learner).
+
+**Result**: Private F1 = **1.000**, Public F1 = **1.000**
 
 **Why this works**:
 
@@ -132,15 +134,19 @@ NLI models are purpose-built for exactly this: given a premise (notes) and hypot
 - **Free** — open-source model, no API costs
 - **Versioned** — model weights are fixed, reproducible forever
 
-### Architecture: Stacking (ML + NLI → Meta-learner)
+### Architecture: Stacking (ML + NLI → Wider Meta-learner)
 
 ```
-Step 1: uv run pipeline       → ML predictions (existing XGBoost/LightGBM)
+Step 1: uv run pipeline       → ML predictions (146 features, LightGBM)
 Step 2: uv run nli-extract    → NLI contradiction scores (DeBERTa, separate process)
-Step 3: uv run stack          → LogReg meta-learner combines both → final submission
+Step 3: uv run stack          → LogReg meta-learner (15 features) → final submission
 ```
 
-**Why stacking over NLI-as-features**:
+The meta-learner uses 15 features: `ml_proba` + 6 NLI scores + 8 context features (`resp_not_in_transcript`, `resp_empty_count`, `resp_binary_ratio`, `response_completeness`, `answered_count`, `whisper_mismatch_count`, `rule_any_fired`, `outcome_pred_confidence`).
+
+The wider feature set lets the meta-learner contextualize NLI contradictions. For example, high NLI contradiction + answers verified in transcript (`resp_not_in_transcript` near 0) = not a real ticket. This context-awareness is what pushed from 0.9333 to 1.000.
+
+**Why stacking over NLI-as-features alone**:
 - Each model runs independently — no OOM (DeBERTa is 1.5GB in memory, XGBoost grid search needs memory too)
 - Meta-learner learns *when* to trust ML vs NLI
 - Can add more models later (SetFit, LLM scores, etc.) by adding columns
@@ -191,6 +197,16 @@ Step 3: uv run stack          → LogReg meta-learner combines both → final su
 
 ---
 
+## Approach 8: Response Checker + Wider Meta-learner
+
+**What**: Added an 8th signal extractor (`response_checker.py`) that verifies whether recorded answers actually appear in the transcript. 5 new features, most notably `resp_not_in_transcript` (tickets: 0.163, non-tickets: 0.021). Then expanded the stacking meta-learner from 7 features (ml_proba + 6 NLI) to 15 features by adding 8 context features including response checker signals.
+
+**Result**: Base CV F1 = 0.9599 +/- 0.036. Stacked CV F1 = 0.9739 +/- 0.021. Private F1 = **1.000**. 18 test flags (up from 17).
+
+**Why it works**: The response checker gives the meta-learner ground truth about answer verification. When NLI says "there's a contradiction" and the response checker confirms "answers don't appear in transcript," the meta-learner can be confident. When NLI fires but answers are verified, the meta-learner can suppress the false positive.
+
+---
+
 ## Summary: Why Each Approach Fails or Succeeds
 
 | Approach | F1 Achieved | Why It Stops There |
@@ -198,12 +214,13 @@ Step 3: uv run stack          → LogReg meta-learner combines both → final su
 | Hardcoded rules + XGBoost | 0.9333 | Can't reason about text contradictions |
 | Embeddings + ensemble | ~0.905 OOF | Embeddings capture similarity, not contradiction |
 | LLM-as-judge | N/A (rejected) | Cost, latency, reproducibility, over-flagging |
-| **NLI stacking** | **TBD** | **Purpose-built for contradiction detection** |
+| **NLI stacking** | **1.000** | **Purpose-built for contradiction detection** |
+| **Response checker + wider meta-learner** | **1.000** | **Contextualizes NLI with answer verification** |
 | SetFit | Not tested | Limited by 59 training examples |
 | Synthetic augmentation | Not tested | Doesn't address the reasoning gap |
 | Fine-tuned BERT | Not tested | Too few positives for fine-tuning |
 
-The winning insight: **the gap between 0.93 and 1.0 is not a data problem or a feature engineering problem — it's a reasoning problem.** NLI models reason about textual entailment and contradiction. Everything else is pattern matching.
+The winning insight: **the gap between 0.93 and 1.0 is not a data problem or a feature engineering problem — it's a reasoning problem.** NLI models reason about textual entailment and contradiction. The wider meta-learner with context features (especially `resp_not_in_transcript`) lets the system verify NLI findings against ground truth, eliminating false positives.
 
 ---
 
@@ -253,29 +270,21 @@ Why both Option B AND stacking:
 
 ```
 uv run nli-extract   →  44s (MPS, 43ms/call)  →  6 NLI features per split
-uv run pipeline      →  30s                    →  141 features, LGB trained
-uv run stack         →  <1s                    →  meta-learner, submission
+uv run pipeline      →  30s                    →  146 features, LGB trained
+uv run stack         →  <1s                    →  15-feature meta-learner, submission
 ```
 
 ### Metrics Comparison
 
-| Metric | Old (135 features, no NLI) | New (141 features + NLI + stacking) |
-|--------|---------------------------|-------------------------------------|
-| LGB CV F1 | 0.9556 | **0.9746** |
-| XGB CV F1 | 0.9440 | **0.9498** |
-| CV F1 std | 0.0742 | **0.0413** (much more stable) |
+| Metric | v1 (135 features, no NLI) | Final (146 features + NLI + wider stacking) |
+|--------|---------------------------|---------------------------------------------|
+| Base CV F1 | 0.944 +/- 0.074 | **0.9599 +/- 0.036** |
+| Stacked CV F1 | N/A | **0.9739 +/- 0.021** |
 | Val F1 | 1.000 | 1.000 |
 | Test flags | 17 | **18** (+1 new catch) |
-| Private LB | 0.9333 | **TBD** (late submission) |
-
-### Meta-learner Coefficients (what it learned)
-
-| Feature | Coefficient | Interpretation |
-|---------|-------------|----------------|
-| ml_proba | 5.997 | ML is the dominant signal |
-| nli_mean_entailment | 1.134 | Low entailment = suspicious |
-| nli_max_contradiction | 1.041 | High contradiction = ticket |
-| nli_num_contradictions | 0.913 | More contradictions = more likely |
-| nli_outcome_contradiction | 0.453 | Outcome mismatch contributes |
-| nli_answered_count_contradiction | 0.272 | Answer count mismatch contributes |
-| nli_completeness_contradiction | -0.204 | Completeness contradiction slightly negative (escalated noise) |
+| Private LB | 0.9333 | **1.000** |
+| Public LB | 0.9333 | **1.000** |
+| Blended threshold | 0.35 | **0.69** (40% val + 60% CV) |
+| Signal extractors | 7 | **8** (+ response checker) |
+| Total features | 135 | **146** |
+| Meta-learner features | N/A | **15** (ml_proba + 6 NLI + 8 context) |

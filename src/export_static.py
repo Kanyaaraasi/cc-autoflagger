@@ -4,10 +4,12 @@ import json
 import pickle
 import re
 
+import numpy as np
 import pandas as pd
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET, PROJECT_ROOT
 from .data_loader import load_all
+from .app import compute_flag_explanation, compute_signal_health, compute_contributions
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 
@@ -102,12 +104,7 @@ def build_api_data():
                     "mean_entailment": round(float(nli_row.get("nli_mean_entailment", 1)), 4),
                 }
 
-            detail = {
-                **call,
-                "validation_notes": str(row.get("validation_notes", "")),
-                "transcript_turns": turns,
-                "responses": responses,
-                "signals": {
+            signals = {
                     "heuristics": {"fired": rule_cols, "total_fired": sum(rule_cols.values())},
                     "transcript_diff": {
                         "wer": round(float(feat_row.get("diff_wer", 0)), 4),
@@ -130,8 +127,30 @@ def build_api_data():
                         "entropy": round(float(feat_row.get("outcome_pred_entropy", 0)), 4),
                     },
                     "text_features": {"keywords_found": kw_cols},
-                    "nli": nli_signals,
-                },
+                    "response_checker": {
+                        "not_in_transcript": round(float(feat_row.get("resp_not_in_transcript", 0)), 4),
+                        "empty_count": int(feat_row.get("resp_empty_count", 0)),
+                        "binary_ratio": round(float(feat_row.get("resp_binary_ratio", 0)), 4),
+                        "words_per_answered": round(float(feat_row.get("resp_words_per_answered", 0)), 1),
+                        "duration_per_answered": round(float(feat_row.get("resp_duration_per_answered", 0)), 1),
+                    },
+                "nli": nli_signals,
+            }
+
+            # Compute importance for contributions
+            imp = pd.Series(dtype=float)
+            if hasattr(model, "feature_importances_"):
+                imp = pd.Series(model.feature_importances_, index=columns)
+
+            detail = {
+                **call,
+                "validation_notes": str(row.get("validation_notes", "")),
+                "transcript_turns": turns,
+                "responses": responses,
+                "signals": signals,
+                "signal_health": compute_signal_health(signals),
+                "flag_explanation": compute_flag_explanation(signals, float(proba[idx]), bool(pred[idx])),
+                "contributions": compute_contributions(feat_row, imp),
                 "top_features": top_features,
             }
             call_details[row["call_id"]] = detail
@@ -141,19 +160,52 @@ def build_api_data():
     val_proba = model.predict_proba(X_val)[:, 1]
     val_pred = (val_proba >= threshold).astype(int)
 
-    # Feature importance
-    importance_list = []
+    # Feature importance (structured format matching new API)
+    features_list = []
     if hasattr(model, "feature_importances_"):
         imp = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
-        importance_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
+        features_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
 
-    # Add meta-learner coefficients
+    meta_learner_list = None
     if meta_model and hasattr(meta_model, "coef_") and meta_config:
         meta_features = meta_config.get("meta_features", [])
         if len(meta_features) == len(meta_model.coef_[0]):
-            importance_list.append({"feature": "--- META-LEARNER ---", "importance": 0})
-            for feat, coef in zip(meta_features, meta_model.coef_[0]):
-                importance_list.append({"feature": f"meta:{feat}", "importance": round(float(coef), 4)})
+            meta_learner_list = [
+                {"name": feat, "coefficient": round(float(coef), 4), "direction": "ticket" if coef > 0 else "clean"}
+                for feat, coef in zip(meta_features, meta_model.coef_[0])
+            ]
+
+    importance_data = {"features": features_list, "meta_learner": meta_learner_list}
+
+    # Threshold sweep
+    all_proba = np.concatenate([
+        model.predict_proba(X_train)[:, 1], val_proba, model.predict_proba(X_test)[:, 1],
+    ])
+    sweep = []
+    for t in np.arange(0.05, 0.96, 0.05):
+        t = round(float(t), 2)
+        vp = (val_proba >= t).astype(int)
+        tp = int(((vp == 1) & (y_val == 1)).sum())
+        fp = int(((vp == 1) & (y_val == 0)).sum())
+        fn = int(((vp == 0) & (y_val == 1)).sum())
+        tn = int(((vp == 0) & (y_val == 0)).sum())
+        sweep.append({
+            "threshold": t,
+            "flagged_count": int((all_proba >= t).sum()),
+            "val_f1": round(f1_score(y_val, vp, zero_division=0), 4),
+            "val_precision": round(precision_score(y_val, vp, zero_division=0), 4),
+            "val_recall": round(recall_score(y_val, vp, zero_division=0), 4),
+            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+        })
+
+    threshold_sweep = {
+        "sweep": sweep,
+        "cv_folds": meta_config.get("cv_f1_scores", []) if meta_config else [],
+        "cv_f1_mean": meta_config.get("cv_f1_mean") if meta_config else None,
+        "cv_f1_std": meta_config.get("cv_f1_std") if meta_config else None,
+        "base_model": {"val_f1": config.get("val_metrics", {}).get("f1"), "threshold": config.get("threshold")},
+        "stacked_model": {"val_f1": meta_config.get("val_f1"), "threshold": meta_config.get("threshold")} if meta_config else None,
+    }
 
     # Outcome breakdown
     outcome_counts = {}
@@ -191,7 +243,8 @@ def build_api_data():
     return {
         "stats": stats,
         "calls": all_calls,
-        "importance": importance_list,
+        "importance": importance_data,
+        "threshold_sweep": threshold_sweep,
         "details": call_details,
     }
 
@@ -211,7 +264,7 @@ def export():
 
     # Embed data into index.html
     data_script = f"""<script>
-    window.__STATIC_DATA__ = {json.dumps({"stats": data["stats"], "calls": data["calls"], "importance": data["importance"]})};
+    window.__STATIC_DATA__ = {json.dumps({"stats": data["stats"], "calls": data["calls"], "importance": data["importance"], "threshold_sweep": data["threshold_sweep"]})};
     </script>"""
 
     # Embed all call details into call.html
@@ -226,7 +279,15 @@ def export():
           if (window.__STATIC_DATA__) {
             this.stats = window.__STATIC_DATA__.stats;
             this.calls = window.__STATIC_DATA__.calls;
-            this.importance = window.__STATIC_DATA__.importance;
+            const impData = window.__STATIC_DATA__.importance;
+            this.importance = impData.features || impData;
+            this.metaLearner = impData.meta_learner || null;
+            this.sweepData = window.__STATIC_DATA__.threshold_sweep || null;
+            if (this.sweepData && this.stats) {
+              const t = this.stats.threshold;
+              const nearest = this.sweepData.sweep.reduce((a, b) => Math.abs(b.threshold - t) < Math.abs(a.threshold - t) ? b : a);
+              this.selectedThreshold = nearest.threshold;
+            }
             this.buildHistogram(this.calls);
             return;
           }"""
@@ -251,7 +312,7 @@ def export():
           const callId = window.location.pathname.split('/call/')[1];
           const data = await fetch('/api/call/' + callId).then(r => r.json());
           if (!data.error) {
-            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals } };
+            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals }, signal_health: data.signal_health || {} };
             this.loaded = true;
           }
         },""",
@@ -260,7 +321,7 @@ def export():
           if (window.__CALL_DETAILS__ && callId && window.__CALL_DETAILS__[callId]) {
             const data = window.__CALL_DETAILS__[callId];
             const empty = this.call;
-            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals } };
+            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals }, signal_health: data.signal_health || {} };
             this.loaded = true;
           }
         },"""

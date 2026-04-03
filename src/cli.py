@@ -61,8 +61,13 @@ def nli_extract():
 
 def stack():
     """Run stacking meta-learner: ML + NLI → final predictions."""
+    import sys
     from .stack import stack_and_predict
-    stack_and_predict()
+    threshold = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--threshold" and i + 1 < len(sys.argv):
+            threshold = float(sys.argv[i + 1])
+    stack_and_predict(threshold_override=threshold)
 
 
 def eda():

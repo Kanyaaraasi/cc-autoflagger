@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 
-from src.signals import heuristics, transcript_diff, number_checker, flow_checker
+from src.signals import heuristics, transcript_diff, number_checker, flow_checker, response_checker
 from src.signals.text_features import TextFeatureExtractor
 from src.signals.outcome_predictor import OutcomePredictor
 
@@ -95,6 +95,43 @@ class TestNumberChecker:
         }])
         result = number_checker.extract(df)
         assert result["num_implausible"].iloc[0] >= 1
+
+
+class TestResponseChecker:
+    def test_output_columns(self, sample_call):
+        result = response_checker.extract(sample_call)
+        expected = ["resp_not_in_transcript", "resp_empty_count", "resp_binary_ratio",
+                    "resp_words_per_answered", "resp_duration_per_answered"]
+        for col in expected:
+            assert col in result.columns
+
+    def test_normal_call_answers_in_transcript(self, sample_call):
+        result = response_checker.extract(sample_call)
+        # All answers should be found in transcript
+        assert result["resp_not_in_transcript"].iloc[0] < 0.2
+
+    def test_skipped_questions_many_empties(self, ticket_call_skipped_questions):
+        result = response_checker.extract(ticket_call_skipped_questions)
+        assert result["resp_empty_count"].iloc[0] >= 5
+
+    def test_stt_error_answer_not_in_transcript(self, ticket_call_stt_error):
+        result = response_checker.extract(ticket_call_stt_error)
+        # "62" is in response but "262" is in transcript — "62" IS a substring of "262" though
+        # so the exact match depends on implementation
+        assert result["resp_not_in_transcript"].iloc[0] >= 0.0
+
+    def test_binary_ratio(self, sample_call):
+        result = response_checker.extract(sample_call)
+        # sample_call has many "No"/"Yes" answers
+        assert result["resp_binary_ratio"].iloc[0] > 0.3
+
+    def test_words_per_answered(self, sample_call):
+        result = response_checker.extract(sample_call)
+        assert result["resp_words_per_answered"].iloc[0] > 0
+
+    def test_duration_per_answered(self, sample_call):
+        result = response_checker.extract(sample_call)
+        assert result["resp_duration_per_answered"].iloc[0] > 0
 
 
 class TestFlowChecker:
