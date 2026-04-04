@@ -109,7 +109,7 @@
       <span class="hidden md:inline" style="color: var(--border)">│</span>
       <span class="hidden md:inline">Stacked NLI + LightGBM</span>
       <span class="hidden lg:inline" style="color: var(--border)">│</span>
-      <span class="hidden lg:inline">146 features</span>
+      <span class="hidden lg:inline" x-text="heroStats.featureCount + ' features'"></span>
     </div>
     <div class="flex items-center gap-3">
       <span class="w-1.5 h-1.5 rounded-full inline-block" style="background: var(--chart-1); animation: pulse 2s infinite"></span>
@@ -136,19 +136,19 @@
       <p class="text-sm md:text-base" style="color: var(--muted-foreground)">Automatically detect which AI healthcare calls need human review</p>
       <div class="flex flex-wrap justify-center gap-3 pt-2">
         <div class="panel rounded-lg px-4 py-3 text-center min-w-[110px]">
-          <div class="mono text-lg font-bold" style="color: var(--chart-1)">1.000</div>
-          <div class="text-xs mt-1" style="color: var(--muted-foreground)">F1 Score</div>
+          <div class="mono text-lg font-bold" style="color: var(--chart-1)" x-text="heroStats.f1">---</div>
+          <div class="text-xs mt-1" style="color: var(--muted-foreground)">Val F1</div>
         </div>
         <div class="panel rounded-lg px-4 py-3 text-center min-w-[110px]">
-          <div class="mono text-lg font-bold" style="color: var(--destructive)">18</div>
+          <div class="mono text-lg font-bold" style="color: var(--destructive)" x-text="heroStats.flagged">---</div>
           <div class="text-xs mt-1" style="color: var(--muted-foreground)">Flagged</div>
         </div>
         <div class="panel rounded-lg px-4 py-3 text-center min-w-[110px]">
-          <div class="mono text-lg font-bold" style="color: var(--foreground)">8</div>
+          <div class="mono text-lg font-bold" style="color: var(--foreground)" x-text="heroStats.signalCount">---</div>
           <div class="text-xs mt-1" style="color: var(--muted-foreground)">Signals</div>
         </div>
         <div class="panel rounded-lg px-4 py-3 text-center min-w-[110px]">
-          <div class="mono text-lg font-bold" style="color: var(--foreground)">146</div>
+          <div class="mono text-lg font-bold" style="color: var(--foreground)" x-text="heroStats.featureCount">---</div>
           <div class="text-xs mt-1" style="color: var(--muted-foreground)">Features</div>
         </div>
       </div>
@@ -187,10 +187,10 @@
     <section class="fade-up" style="animation-delay: 0.1s">
       <h2 class="text-xs font-semibold uppercase tracking-widest mb-5" style="color: var(--muted-foreground)">How It Works</h2>
 
-      <!-- Signal Grid — Traditional -->
-      <div class="text-[10px] font-semibold uppercase tracking-widest mb-2" style="color: var(--muted-foreground)">Traditional Signals</div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-        <template x-for="(signal, idx) in signals.slice(0, 6)" :key="idx">
+      <!-- Signal Grid -->
+      <div class="text-[10px] font-semibold uppercase tracking-widest mb-2" style="color: var(--muted-foreground)">Signal Extractors</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-8">
+        <template x-for="(signal, idx) in signals" :key="idx">
           <div class="signal-card" @click="expandedSignal === idx ? expandedSignal = null : expandedSignal = idx"
                :style="expandedSignal === idx ? 'border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary)' : ''">
             <div class="flex items-start justify-between gap-2 mb-1">
@@ -204,51 +204,28 @@
         </template>
       </div>
 
-      <!-- Signal Grid — Semantic -->
-      <div class="text-[10px] font-semibold uppercase tracking-widest mb-2" style="color: var(--primary)">Semantic Signals</div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
-        <template x-for="(signal, idx) in signals.slice(6, 8)" :key="idx + 6">
-          <div class="signal-card" style="border-left: 2px solid var(--primary)" @click="expandedSignal === (idx + 6) ? expandedSignal = null : expandedSignal = (idx + 6)"
-               :style="expandedSignal === (idx + 6) ? 'border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); border-left: 2px solid var(--primary)' : 'border-left: 2px solid var(--primary)'">
-            <div class="flex items-start justify-between gap-2 mb-1">
-              <span class="text-xs font-semibold" style="color: var(--foreground)" x-text="signal.name"></span>
-              <span class="mono text-[10px] px-1.5 py-0.5 rounded shrink-0" style="background: var(--muted); color: var(--muted-foreground)" x-text="signal.features + 'f'"></span>
-            </div>
-            <p class="text-xs leading-snug" style="color: var(--muted-foreground)" x-text="signal.desc"></p>
-            <div x-show="expandedSignal === (idx + 6)" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 -translate-y-1" x-transition:enter-end="opacity-100 translate-y-0" class="mt-3 pt-3 text-xs leading-relaxed" style="border-top: 1px solid var(--border); color: var(--foreground)" x-text="signal.detail">
-            </div>
-          </div>
-        </template>
-      </div>
-
       <!-- Pipeline Flow Diagram -->
       <div class="panel rounded-lg p-5 md:p-8 mb-6">
         <div class="flex items-center justify-center gap-0 overflow-x-auto py-2">
           <!-- Stage 1: Signals -->
           <div class="pipeline-node pipeline-node-active shrink-0">
-            <div class="mono text-xs font-bold" style="color: var(--primary)">8</div>
+            <div class="mono text-xs font-bold" style="color: var(--primary)" x-text="heroStats.signalCount">-</div>
             <div class="text-[10px] mt-0.5" style="color: var(--muted-foreground)">Signal Extractors</div>
           </div>
           <div class="flex items-center shrink-0 mx-1"><div class="arrow-line"></div><div class="arrow-head"></div></div>
           <!-- Stage 2: Features -->
           <div class="pipeline-node shrink-0">
-            <div class="mono text-xs font-bold" style="color: var(--chart-4)">146</div>
+            <div class="mono text-xs font-bold" style="color: var(--chart-4)" x-text="heroStats.featureCount">-</div>
             <div class="text-[10px] mt-0.5" style="color: var(--muted-foreground)">Features</div>
           </div>
           <div class="flex items-center shrink-0 mx-1"><div class="arrow-line"></div><div class="arrow-head"></div></div>
-          <!-- Stage 3: LightGBM -->
+          <!-- Stage 3: Model -->
           <div class="pipeline-node shrink-0">
-            <div class="text-xs font-bold" style="color: var(--foreground)">LightGBM</div>
+            <div class="text-xs font-bold" style="color: var(--foreground)" x-text="heroStats.model">-</div>
             <div class="text-[10px] mt-0.5" style="color: var(--muted-foreground)">Gradient Boosting</div>
           </div>
           <div class="flex items-center shrink-0 mx-1"><div class="arrow-line"></div><div class="arrow-head"></div></div>
-          <!-- Stage 4: NLI -->
-          <div class="pipeline-node shrink-0">
-            <div class="text-xs font-bold" style="color: var(--foreground)">NLI Stacking</div>
-            <div class="text-[10px] mt-0.5" style="color: var(--muted-foreground)">DeBERTa Cross-Encoder</div>
-          </div>
-          <div class="flex items-center shrink-0 mx-1"><div class="arrow-line"></div><div class="arrow-head"></div></div>
-          <!-- Stage 5: Prediction -->
+          <!-- Stage 4: Prediction -->
           <div class="pipeline-node pipeline-node-active shrink-0">
             <div class="text-xs font-bold" style="color: var(--primary)">Prediction</div>
             <div class="text-[10px] mt-0.5" style="color: var(--muted-foreground)">Flag / Pass</div>
@@ -256,46 +233,8 @@
         </div>
       </div>
 
-      <p class="text-xs text-center leading-relaxed max-w-2xl mx-auto" style="color: var(--muted-foreground)">
-        Two models work together: LightGBM finds patterns in numbers, DeBERTa catches contradictions in text. A meta-learner combines both predictions.
+      <p class="text-xs text-center leading-relaxed max-w-2xl mx-auto" style="color: var(--muted-foreground)" x-text="heroStats.pipelineDesc">
       </p>
-    </section>
-
-    <!-- THE JOURNEY -->
-    <section class="fade-up" style="animation-delay: 0.13s">
-      <div class="panel rounded-lg p-4 md:p-5">
-        <h2 class="text-xs font-semibold uppercase tracking-widest mb-4" style="color: var(--muted-foreground)">The Journey</h2>
-        <div class="space-y-3">
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs" style="color: var(--muted-foreground)">v1: Base ML</span>
-              <span class="mono text-xs" style="color: var(--chart-4)">0.933</span>
-            </div>
-            <div class="w-full rounded-full h-2" style="background: var(--muted)">
-              <div class="h-2 rounded-full" style="width: 93.3%; background: var(--chart-4)"></div>
-            </div>
-          </div>
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs" style="color: var(--muted-foreground)">v2: + NLI</span>
-              <span class="mono text-xs" style="color: var(--chart-1)">0.952</span>
-            </div>
-            <div class="w-full rounded-full h-2" style="background: var(--muted)">
-              <div class="h-2 rounded-full" style="width: 95.2%; background: var(--chart-1)"></div>
-            </div>
-          </div>
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs font-bold" style="color: var(--foreground)">v3: + Response</span>
-              <span class="mono text-xs font-bold" style="color: var(--chart-1)">1.000</span>
-            </div>
-            <div class="w-full rounded-full h-2" style="background: var(--muted)">
-              <div class="h-2 rounded-full" style="width: 100%; background: var(--chart-1)"></div>
-            </div>
-          </div>
-        </div>
-        <p class="text-[10px] mt-3" style="color: var(--muted-foreground)">F1 score on hidden test set</p>
-      </div>
     </section>
 
     <!-- RESULTS -->
@@ -303,16 +242,16 @@
       <h2 class="text-xs font-semibold uppercase tracking-widest mb-4" style="color: var(--muted-foreground)">Results</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div class="panel rounded-lg p-4">
-          <div class="mono text-base font-bold mb-1" style="color: var(--chart-1)">Perfect Score</div>
-          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)">F1 = 1.000 on the hidden test set. Every problematic call was caught. Zero false alarms.</p>
+          <div class="mono text-base font-bold mb-1" style="color: var(--chart-1)" x-text="'Val F1: ' + heroStats.f1">---</div>
+          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)" x-text="'Precision: ' + heroStats.precision + ' · Recall: ' + heroStats.recall + ' on the validation set.'"></p>
         </div>
         <div class="panel rounded-lg p-4">
-          <div class="mono text-base font-bold mb-1" style="color: var(--destructive)">18 Calls Flagged</div>
-          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)">Out of 159 test calls, 18 were flagged for human review (11.3%). The rest were confirmed clean.</p>
+          <div class="mono text-base font-bold mb-1" style="color: var(--destructive)" x-text="heroStats.flagged + ' Calls Flagged'">---</div>
+          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)" x-text="'Out of ' + heroStats.totalCalls + ' calls, ' + heroStats.flagged + ' were flagged for human review (' + heroStats.flaggedPct + '%).'"></p>
         </div>
         <div class="panel rounded-lg p-4">
-          <div class="mono text-base font-bold mb-1" style="color: var(--chart-4)">Robust Validation</div>
-          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)">5-fold cross-validation F1 = 0.974. Consistent performance across 5 random splits of the data — not just lucky on one test.</p>
+          <div class="mono text-base font-bold mb-1" style="color: var(--chart-4)" x-text="heroStats.model">---</div>
+          <p class="text-xs leading-relaxed" style="color: var(--muted-foreground)" x-text="heroStats.modelDesc"></p>
         </div>
       </div>
     </section>
@@ -370,37 +309,80 @@
       return {
         isDark: document.documentElement.classList.contains('dark'),
         expandedSignal: null,
+        heroStats: {
+          f1: '---', precision: '---', recall: '---',
+          flagged: '---', flaggedPct: '---', totalCalls: '---',
+          signalCount: '---', featureCount: '---',
+          model: '---', modelDesc: '', pipelineDesc: '',
+        },
         signals: [
-          { name: 'Heuristics', features: 12, desc: 'Common-sense checks — is the call marked complete but only 5 of 14 questions answered?', detail: 'Checks completion ratios, whisper mismatches, medical advice detection, outcome consistency, and form submission status.' },
-          { name: 'Transcript Diff', features: 4, desc: 'Do the two recordings of the same call match?', detail: 'Compares formatted transcript against raw Whisper STT using Word Error Rate, Character Error Rate, sequence similarity, and length ratio.' },
-          { name: 'Number Checker', features: 3, desc: 'Are the health numbers realistic? Catches when 262 lbs gets recorded as 62.', detail: 'Extracts numbers from transcript, checks for STT errors (substring/transposition), plausibility (weight 50-600 lbs), and transcript gaps.' },
-          { name: 'Flow Checker', features: 5, desc: 'Did the call follow the expected steps? Greeting → questions → closing.', detail: 'Models expected 19-state call sequence, computes Levenshtein edit distance, counts missing states and question coverage.' },
-          { name: 'Text Analysis', features: 30, desc: "What do the AI's validation notes say about the call?", detail: 'TF-IDF on validation notes (15 dims) plus 13 binary keyword flags (mismatch, error, skipped, medical advice, etc.) plus word counts.' },
-          { name: 'Outcome Predictor', features: 4, desc: 'Does the recorded label match what actually happened?', detail: 'Separate LogisticRegression predicts outcome from transcript. Outputs: disagreement flag, entropy, confidence, actual probability.' },
-          { name: 'Response Checker', features: 5, desc: 'Are the recorded answers actually in the transcript?', detail: 'Checks if answers in responses_json appear in transcript text. Also measures empty responses, binary answer ratio, words and duration per answer.' },
-          { name: 'NLI Checker', features: 6, desc: 'Do the notes contradict the data? Uses DeBERTa to detect contradictions.', detail: 'Scores (validation_notes, hypothesis) pairs for contradiction using cross-encoder/nli-deberta-v3-base. Checks answered count, outcome, completeness.' }
+          { name: 'Heuristics', features: '-', desc: 'Common-sense checks — is the call marked complete but only 5 of 14 questions answered?', detail: 'Checks completion ratios, whisper mismatches, medical advice detection, outcome consistency, and form submission status.' },
+          { name: 'Transcript Diff', features: '-', desc: 'Do the two recordings of the same call match?', detail: 'Compares formatted transcript against raw Whisper STT using Word Error Rate, Character Error Rate, sequence similarity, and length ratio.' },
+          { name: 'Number Checker', features: '-', desc: 'Are the health numbers realistic? Catches when 262 lbs gets recorded as 62.', detail: 'Extracts numbers from transcript, checks for STT errors (substring/transposition), plausibility (weight 50-600 lbs), and transcript gaps.' },
+          { name: 'Flow Checker', features: '-', desc: 'Did the call follow the expected steps? Greeting → questions → closing.', detail: 'Models expected 19-state call sequence, computes Levenshtein edit distance, counts missing states and question coverage.' },
+          { name: 'Text Analysis', features: '-', desc: "What do the AI's validation notes say about the call?", detail: 'TF-IDF on validation notes plus binary keyword flags (mismatch, error, skipped, medical advice, etc.) plus word counts.' },
+          { name: 'Outcome Predictor', features: '-', desc: 'Does the recorded label match what actually happened?', detail: 'Separate model predicts outcome from transcript. Outputs: disagreement flag, entropy, confidence, actual probability.' },
+          { name: 'Response Checker', features: '-', desc: 'Are the recorded answers actually in the transcript?', detail: 'Checks if answers in responses_json appear in transcript text. Also measures empty responses, binary answer ratio, words and duration per answer.' },
+          { name: 'LLM Judge', features: '-', desc: 'LLM-based analysis of call quality.', detail: 'Detects fabrication, mislabelling, and need for escalation using large language model analysis.' }
         ],
 
         init() {
-          // Try to load pipeline info from API or window global
-          const fallback = window.__PIPELINE_INFO__;
-          if (fallback && fallback.signals) {
-            this.mergeSignals(fallback.signals);
+          // Load stats
+          const statsSource = window.__STATIC_DATA__?.stats;
+          const pipelineSource = window.__PIPELINE_INFO__;
+          if (statsSource) {
+            this.applyStats(statsSource);
           } else {
-            fetch('/api/pipeline-info')
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { if (data && data.signals) this.mergeSignals(data.signals); })
-              .catch(() => {});
+            fetch('/api/stats').then(r => r.ok ? r.json() : null)
+              .then(data => { if (data) this.applyStats(data); }).catch(() => {});
+          }
+          // Load pipeline info
+          if (pipelineSource && pipelineSource.signals) {
+            this.applyPipeline(pipelineSource);
+          } else {
+            fetch('/api/pipeline-info').then(r => r.ok ? r.json() : null)
+              .then(data => { if (data) this.applyPipeline(data); }).catch(() => {});
           }
         },
 
-        mergeSignals(apiSignals) {
-          if (!Array.isArray(apiSignals)) return;
-          apiSignals.forEach((s, i) => {
-            if (this.signals[i] && s.features != null) {
-              this.signals[i].features = s.features;
-            }
+        applyStats(s) {
+          const h = this.heroStats;
+          h.f1 = s.val_metrics?.f1?.toFixed(3) ?? '---';
+          h.precision = s.val_metrics?.precision?.toFixed(3) ?? '---';
+          h.recall = s.val_metrics?.recall?.toFixed(3) ?? '---';
+          h.flagged = s.flagged_calls ?? '---';
+          h.flaggedPct = s.flagged_pct ?? '---';
+          h.totalCalls = s.total_calls ?? '---';
+          h.featureCount = s.feature_count ?? '---';
+          if (s.is_stratified && s.stratified) {
+            h.model = 'Stratified Ensemble';
+            const c = s.stratified.completed, nc = s.stratified.non_completed;
+            h.modelDesc = 'Completed: ' + c.model + ' (t=' + c.threshold.toFixed(2) + ', F1=' + (c.f1?.toFixed(3) ?? '---') + ') · Non-completed: ' + nc.model + ' (t=' + nc.threshold.toFixed(2) + ', F1=' + (nc.f1?.toFixed(3) ?? '---') + ')';
+            h.pipelineDesc = 'Separate models for completed and non-completed calls. Each uses an ensemble of XGBoost + LightGBM with outcome-specific thresholds.';
+          } else {
+            h.model = s.model ?? '---';
+            h.modelDesc = s.feature_count + ' features with threshold ' + (s.threshold?.toFixed(2) ?? '---');
+            h.pipelineDesc = 'A single gradient boosting model scores each call. Calls above the threshold are flagged for human review.';
+          }
+        },
+
+        applyPipeline(data) {
+          if (!Array.isArray(data.signals)) return;
+          // Replace signals list with API data, keeping local descriptions as fallback
+          const localMap = {};
+          this.signals.forEach(s => { localMap[s.name] = s; });
+          const merged = data.signals.map(api => {
+            const local = localMap[api.name] || {};
+            return {
+              name: api.name,
+              features: api.feature_count,
+              desc: api.description || local.desc || '',
+              detail: local.detail || api.description || '',
+            };
           });
+          this.signals = merged;
+          this.heroStats.signalCount = merged.length;
+          if (data.total_features) this.heroStats.featureCount = data.total_features;
         },
 
         toggleTheme() {
