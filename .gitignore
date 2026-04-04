@@ -21,6 +21,9 @@ outputs/
 .claude
 .DS_Store
 
+# CatBoost training logs
+catboost_info/
+
 # Large data files
 datasets-v2/
 *.rar

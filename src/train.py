@@ -6,16 +6,29 @@ from itertools import product
 
 import numpy as np
 import pandas as pd
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.metrics import f1_score, precision_score, recall_score, classification_report
 from sklearn.model_selection import StratifiedKFold
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
+from catboost import CatBoostClassifier
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET
 from .data_loader import load_all
 from .logger import get_logger
 
 log = get_logger("train")
+
+
+def select_features(X, y, max_features=50):
+    """Select top features using mutual information."""
+    mi = mutual_info_classif(X, y, random_state=42, n_neighbors=5)
+    mi_series = pd.Series(mi, index=X.columns).sort_values(ascending=False)
+    selected = mi_series.head(max_features).index.tolist()
+    log.info(f"  Feature selection: {len(X.columns)} → {len(selected)} (mutual information)")
+    for feat, score in mi_series.head(10).items():
+        log.info(f"    {feat}: {score:.4f}")
+    return selected
 
 
 def find_best_threshold(y_true, y_proba, metric="f1"):
@@ -85,8 +98,8 @@ def grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=None):
         if cache_key in cache:
             cached = cache[cache_key]
             log.info(f"\n--- Using cached params for '{cache_key}' ---")
-            log.info(f"  XGB: {cached['xgb']} | LGB: {cached['lgb']}")
-            return cached["xgb"], cached["lgb"]
+            log.info(f"  XGB: {cached['xgb']} | LGB: {cached['lgb']} | CAT: {cached.get('cat', {})}")
+            return cached["xgb"], cached["lgb"], cached.get("cat", {"depth": 4, "learning_rate": 0.05, "iterations": 200})
 
     log.info("\n--- Grid Search (CV on train) ---")
 
@@ -146,18 +159,40 @@ def grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=None):
 
     log.info(f"Best LGB params: {lgb_best_params} → CV F1={lgb_best_score:.4f}")
 
+    # CatBoost search
+    cat_best_score, cat_best_params = 0, {}
+    for depth, lr, n_est in product([4, 6], [0.05, 0.1], [200, 400]):
+        cv_scores = []
+        for tr_idx, te_idx in skf.split(X_train, y_train):
+            model = CatBoostClassifier(
+                iterations=n_est, depth=depth, learning_rate=lr,
+                auto_class_weights="Balanced", subsample=0.8,
+                random_seed=42, verbose=0,
+            )
+            model.fit(X_train.iloc[tr_idx], y_train[tr_idx])
+            proba = model.predict_proba(X_train.iloc[te_idx])[:, 1]
+            thresh, f1 = find_best_threshold(y_train[te_idx], proba)
+            cv_scores.append(f1)
+
+        mean_f1 = np.mean(cv_scores)
+        if mean_f1 > cat_best_score:
+            cat_best_score = mean_f1
+            cat_best_params = {"depth": depth, "learning_rate": lr, "iterations": n_est}
+
+    log.info(f"Best CAT params: {cat_best_params} → CV F1={cat_best_score:.4f}")
+
     # Save to cache
     if cache_key:
         cache = {}
         if cache_path.exists():
             with open(cache_path) as f:
                 cache = json.load(f)
-        cache[cache_key] = {"xgb": best_params, "lgb": lgb_best_params}
+        cache[cache_key] = {"xgb": best_params, "lgb": lgb_best_params, "cat": cat_best_params}
         with open(cache_path, "w") as f:
             json.dump(cache, f, indent=2)
         log.info(f"  Params cached as '{cache_key}'")
 
-    return best_params, lgb_best_params
+    return best_params, lgb_best_params, cat_best_params
 
 
 def train_and_evaluate():
@@ -289,14 +324,34 @@ def train_and_evaluate():
     return best_name, best_thresh, common_cols
 
 
+def _cv_threshold(X_train, y_train, model_cls, model_params):
+    """Get robust threshold via 5-fold CV instead of tuning on small val set."""
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    thresholds = []
+    for tr_idx, te_idx in skf.split(X_train, y_train):
+        m = model_cls(**model_params)
+        if hasattr(m, 'fit'):
+            if isinstance(m, CatBoostClassifier):
+                m.fit(X_train.iloc[tr_idx], y_train[tr_idx])
+            elif isinstance(m, XGBClassifier):
+                m.fit(X_train.iloc[tr_idx], y_train[tr_idx], verbose=False)
+            else:
+                m.fit(X_train.iloc[tr_idx], y_train[tr_idx])
+        proba = m.predict_proba(X_train.iloc[te_idx])[:, 1]
+        t, _ = find_best_threshold(y_train[te_idx], proba)
+        thresholds.append(t)
+    return round(float(np.median(thresholds)), 2)
+
+
 def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, cache_key=None):
     """Train and evaluate a single group (completed or non-completed)."""
     log.info(f"\n{'='*60}")
     log.info(f"  {group_name}: {len(X_train)} train ({y_train.sum()} tickets), {len(X_val)} val ({y_val.sum()} tickets)")
     log.info(f"{'='*60}")
 
-    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=cache_key)
+    xgb_params, lgb_params, cat_params = grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=cache_key)
 
+    # Train XGBoost
     xgb = XGBClassifier(
         **xgb_params, scale_pos_weight=scale_pos_weight, subsample=0.8,
         colsample_bytree=0.8, min_child_weight=3,
@@ -305,6 +360,7 @@ def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, c
     xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
     xgb_proba = xgb.predict_proba(X_val)[:, 1]
 
+    # Train LightGBM
     lgb = LGBMClassifier(
         **lgb_params, scale_pos_weight=scale_pos_weight, subsample=0.8,
         colsample_bytree=0.8, min_child_samples=5,
@@ -313,10 +369,20 @@ def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, c
     lgb.fit(X_train, y_train)
     lgb_proba = lgb.predict_proba(X_val)[:, 1]
 
-    ensemble_proba = 0.5 * xgb_proba + 0.5 * lgb_proba
+    # Train CatBoost
+    cat = CatBoostClassifier(
+        **cat_params, auto_class_weights="Balanced", subsample=0.8,
+        random_seed=42, verbose=0,
+    )
+    cat.fit(X_train, y_train)
+    cat_proba = cat.predict_proba(X_val)[:, 1]
+
+    # Ensemble (3-way average)
+    ensemble_proba = (xgb_proba + lgb_proba + cat_proba) / 3
 
     results = {}
-    for name, proba in [("xgb", xgb_proba), ("lgb", lgb_proba), ("ensemble", ensemble_proba)]:
+    models_map = {"xgb": xgb, "lgb": lgb, "cat": cat}
+    for name, proba in [("xgb", xgb_proba), ("lgb", lgb_proba), ("cat", cat_proba)]:
         thresh, f1 = find_best_threshold(y_val, proba)
         pred = (proba >= thresh).astype(int)
         prec = precision_score(y_val, pred, zero_division=0)
@@ -324,8 +390,19 @@ def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, c
         results[name] = {"f1": f1, "threshold": thresh, "proba": proba}
         log.info(f"  {name}: F1={f1:.4f} P={prec:.4f} R={rec:.4f} (t={thresh:.2f}, flagged={pred.sum()})")
 
+    # Ensemble with best threshold
+    ens_t, ens_f1 = find_best_threshold(y_val, ensemble_proba)
+    ens_pred = (ensemble_proba >= ens_t).astype(int)
+    ens_prec = precision_score(y_val, ens_pred, zero_division=0)
+    ens_rec = recall_score(y_val, ens_pred, zero_division=0)
+    results["ensemble"] = {"f1": ens_f1, "threshold": ens_t, "proba": ensemble_proba}
+    log.info(f"  ensemble: F1={ens_f1:.4f} P={ens_prec:.4f} R={ens_rec:.4f} (t={ens_t:.2f}, flagged={ens_pred.sum()})")
+
     best_name = max(results, key=lambda k: results[k]["f1"])
-    best_model = xgb if best_name == "xgb" else (lgb if best_name == "lgb" else {"xgb": xgb, "lgb": lgb})
+    if best_name == "ensemble":
+        best_model = {"xgb": xgb, "lgb": lgb, "cat": cat}
+    else:
+        best_model = models_map[best_name]
     best_thresh = results[best_name]["threshold"]
     best_proba = results[best_name]["proba"]
     best_f1 = results[best_name]["f1"]
@@ -340,6 +417,7 @@ def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, c
         "f1": best_f1,
         "xgb_params": xgb_params,
         "lgb_params": lgb_params,
+        "cat_params": cat_params,
     }
 
 
@@ -463,6 +541,7 @@ def train_stratified():
                 "f1": round(comp_result["f1"], 4),
                 "xgb_params": comp_result["xgb_params"],
                 "lgb_params": comp_result["lgb_params"],
+                "cat_params": comp_result["cat_params"],
             },
             "non_completed": {
                 "best_model": nc_result["model_type"],
@@ -470,6 +549,7 @@ def train_stratified():
                 "f1": round(best_f1, 4),
                 "xgb_params": nc_result["xgb_params"],
                 "lgb_params": nc_result["lgb_params"],
+                "cat_params": nc_result["cat_params"],
             },
             "val_metrics": {
                 "f1": round(f1, 4),

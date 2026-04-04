@@ -114,7 +114,8 @@ def compute_contributions(feat_row, importance):
 def _get_proba(model, X, model_type):
     """Get probabilities from a model, handling ensemble case."""
     if model_type == "ensemble":
-        return 0.5 * model["xgb"].predict_proba(X)[:, 1] + 0.5 * model["lgb"].predict_proba(X)[:, 1]
+        parts = [model[k].predict_proba(X)[:, 1] for k in model if hasattr(model[k], "predict_proba")]
+        return sum(parts) / len(parts)
     return model.predict_proba(X)[:, 1]
 
 
@@ -529,23 +530,39 @@ def get_threshold_sweep():
     }
 
 
+def _count_signal_features(all_cols):
+    """Count features per signal group from actual parquet columns."""
+    signal_defs = [
+        ("Heuristics", "heuristics", "rule_", "Common-sense checks — is the call marked complete but only 5 of 14 questions answered?"),
+        ("Transcript Diff", "transcript_diff", "diff_", "Do the two recordings of the same call match? Compares formatted transcript against raw speech-to-text."),
+        ("Number Checker", "number_checker", "num_", "Are the health numbers realistic? Catches when 262 lbs gets recorded as 62."),
+        ("Flow Checker", "flow_checker", "flow_", "Did the call follow the expected steps? Greeting, identity check, 14 questions, closing."),
+        ("Text Analysis", "text_features", ("tfidf_", "vn_kw_"), "What do the AI's validation notes say? Looks for words like 'error', 'mismatch', 'skipped'."),
+        ("Outcome Predictor", "outcome_predictor", "outcome_", "Does the recorded label match what actually happened? A separate model predicts the outcome independently."),
+        ("Response Checker", "response_checker", "resp_", "Are the recorded answers actually in the transcript? Catches fabricated or missing responses."),
+        ("LLM Judge", "llm_judge", "llm_", "LLM-based analysis of call quality — detects fabrication, mislabelling, and need for escalation."),
+    ]
+    signals = []
+    for name, key, prefix, desc in signal_defs:
+        if isinstance(prefix, tuple):
+            count = sum(1 for c in all_cols if any(c.startswith(p) for p in prefix))
+        else:
+            count = sum(1 for c in all_cols if c.startswith(prefix))
+        if count > 0:
+            signals.append({"name": name, "key": key, "description": desc, "feature_count": count})
+    return signals
+
+
 @app.get("/api/pipeline-info")
 def get_pipeline_info():
     """Return signal descriptions for the overview pipeline diagram."""
     s = _state
-    signals = [
-        {"name": "Heuristics", "key": "heuristics", "description": "Common-sense checks — is the call marked complete but only 5 of 14 questions answered?", "feature_count": 12},
-        {"name": "Transcript Diff", "key": "transcript_diff", "description": "Do the two recordings of the same call match? Compares formatted transcript against raw speech-to-text.", "feature_count": 4},
-        {"name": "Number Checker", "key": "number_checker", "description": "Are the health numbers realistic? Catches when 262 lbs gets recorded as 62.", "feature_count": 3},
-        {"name": "Flow Checker", "key": "flow_checker", "description": "Did the call follow the expected steps? Greeting, identity check, 14 questions, closing.", "feature_count": 5},
-        {"name": "Text Analysis", "key": "text_features", "description": "What do the AI's validation notes say? Looks for words like 'error', 'mismatch', 'skipped'.", "feature_count": 30},
-        {"name": "Outcome Predictor", "key": "outcome_predictor", "description": "Does the recorded label match what actually happened? A separate model predicts the outcome independently.", "feature_count": 4},
-        {"name": "Response Checker", "key": "response_checker", "description": "Are the recorded answers actually in the transcript? Catches fabricated or missing responses.", "feature_count": 5},
-    ]
+    all_cols = list(s["X_train"].columns)
+    signals = _count_signal_features(all_cols)
     config = s.get("config", {})
     return {
         "signals": signals,
-        "total_features": len(config.get("columns", [])),
+        "total_features": len(all_cols),
         "model": "STRATIFIED" if config.get("stratified") else config.get("best_model", "lgb").upper(),
     }
 

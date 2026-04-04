@@ -9,7 +9,7 @@ import pandas as pd
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET, PROJECT_ROOT
 from .data_loader import load_all
-from .app import compute_flag_explanation, compute_signal_health, compute_contributions, _get_proba, _predict_split
+from .app import compute_flag_explanation, compute_signal_health, compute_contributions, _get_proba, _predict_split, _count_signal_features
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 
@@ -240,17 +240,10 @@ def build_api_data():
     all_calls.sort(key=lambda c: c["probability"], reverse=True)
 
     # Pipeline info for overview page
+    all_cols = list(X_train.columns)
     pipeline_info = {
-        "signals": [
-            {"name": "Heuristics", "feature_count": 12, "description": "Common-sense checks"},
-            {"name": "Transcript Diff", "feature_count": 4, "description": "Do the two recordings match?"},
-            {"name": "Number Checker", "feature_count": 3, "description": "Are health numbers realistic?"},
-            {"name": "Flow Checker", "feature_count": 5, "description": "Did the call follow expected steps?"},
-            {"name": "Text Analysis", "feature_count": 30, "description": "What do validation notes say?"},
-            {"name": "Outcome Predictor", "feature_count": 4, "description": "Does the label match the conversation?"},
-            {"name": "Response Checker", "feature_count": 5, "description": "Are recorded answers in the transcript?"},
-        ],
-        "total_features": len(columns),
+        "signals": _count_signal_features(all_cols),
+        "total_features": len(all_cols),
     }
 
     return {

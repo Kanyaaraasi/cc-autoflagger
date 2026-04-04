@@ -23,7 +23,8 @@ def _load_model_and_config():
 def _get_proba(model, X, model_type):
     """Get probabilities from a model, handling ensemble case."""
     if model_type == "ensemble":
-        return 0.5 * model["xgb"].predict_proba(X)[:, 1] + 0.5 * model["lgb"].predict_proba(X)[:, 1]
+        parts = [model[k].predict_proba(X)[:, 1] for k in model if hasattr(model[k], "predict_proba")]
+        return sum(parts) / len(parts)
     return model.predict_proba(X)[:, 1]
 
 
