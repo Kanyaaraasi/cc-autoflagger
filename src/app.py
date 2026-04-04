@@ -191,12 +191,15 @@ def _load_state():
 
     # Val metrics
     y_val = val[TARGET].astype(int).values
-    val_proba, _ = _predict_split(model, config, X_val, val)
-    val_pred = (val_proba >= (config["completed"]["threshold"] if is_stratified else config["threshold"])).astype(int)
-    # For stratified, recompute val_pred properly per-outcome
-    if is_stratified:
-        _, val_pred_bool = _predict_split(model, config, X_val, val)
-        val_pred = val_pred_bool.astype(int)
+    _, val_pred_bool = _predict_split(model, config, X_val, val)
+    val_pred = val_pred_bool.astype(int)
+
+    # Train+Val combined metrics
+    y_train = train[TARGET].astype(int).values
+    _, train_pred_bool = _predict_split(model, config, X_train, train)
+    train_pred = train_pred_bool.astype(int)
+    y_all = np.concatenate([y_train, y_val])
+    pred_all = np.concatenate([train_pred, val_pred])
 
     # Feature importance — for stratified, use completed model (larger group)
     imp_model = model["completed"] if is_stratified else model
@@ -226,6 +229,11 @@ def _load_state():
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
             "precision": round(precision_score(y_val, val_pred, zero_division=0), 4),
             "recall": round(recall_score(y_val, val_pred, zero_division=0), 4),
+        },
+        "trainval_metrics": {
+            "f1": round(f1_score(y_all, pred_all, zero_division=0), 4),
+            "precision": round(precision_score(y_all, pred_all, zero_division=0), 4),
+            "recall": round(recall_score(y_all, pred_all, zero_division=0), 4),
         },
     })
 
@@ -314,6 +322,7 @@ def get_stats():
         "flagged_pct": round(len(flagged) / len(all_calls) * 100, 1),
         "threshold": config.get("threshold"),
         "val_metrics": s["val_metrics"],
+        "trainval_metrics": s["trainval_metrics"],
         "model": model_name,
         "is_stratified": is_stratified,
         "stratified": stratified_info,

@@ -128,6 +128,13 @@ def build_api_data():
     val_proba, val_pred_bool = _predict_split(model, config, X_val, val)
     val_pred = val_pred_bool.astype(int)
 
+    # Train+Val combined metrics
+    y_train = train[TARGET].astype(int).values
+    _, train_pred_bool = _predict_split(model, config, X_train, train)
+    train_pred = train_pred_bool.astype(int)
+    y_all = np.concatenate([y_train, y_val])
+    pred_all = np.concatenate([train_pred, val_pred])
+
     # Feature importance — for stratified, use completed model (larger group)
     imp_model = model["completed"] if is_stratified else model
     if is_stratified and isinstance(imp_model, dict):
@@ -213,6 +220,11 @@ def build_api_data():
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
             "precision": round(precision_score(y_val, val_pred, zero_division=0), 4),
             "recall": round(recall_score(y_val, val_pred, zero_division=0), 4),
+        },
+        "trainval_metrics": {
+            "f1": round(f1_score(y_all, pred_all, zero_division=0), 4),
+            "precision": round(precision_score(y_all, pred_all, zero_division=0), 4),
+            "recall": round(recall_score(y_all, pred_all, zero_division=0), 4),
         },
         "model": model_name,
         "is_stratified": is_stratified,
