@@ -151,14 +151,14 @@
                 <div class="h-full bar-fill absolute top-0 left-0"
                   :style="'width:' + (data.flagged / (data.total || 1) * 100) + '%; background:' + (data.flagged > 0 ? 'var(--destructive)' : 'var(--chart-1)') + '; opacity: 0.5'"></div>
               </div>
-              <span class="w-28 text-right mono text-[10px]" style="color: var(--muted-foreground)"
-                x-text="data.actual + ' actual / ' + data.flagged + ' flagged'"></span>
+              <span class="w-36 text-right mono text-[10px]" style="color: var(--muted-foreground)"
+                x-text="(data.correct || 0) + '/' + data.actual + ' caught · ' + data.flagged + ' flagged'"></span>
             </div>
           </template>
         </div>
         <div class="flex items-center gap-3 mt-2 text-[10px]" style="color: var(--muted-foreground)">
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-2" style="background: var(--chart-4); opacity: 0.6"></span>actual</span>
-          <span class="flex items-center gap-1"><span class="inline-block w-3 h-2" style="background: var(--destructive); opacity: 0.5"></span>flagged</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-2" style="background: var(--chart-4); opacity: 0.6"></span>actual tickets</span>
+          <span class="flex items-center gap-1"><span class="inline-block w-3 h-2" style="background: var(--destructive); opacity: 0.5"></span>model flagged</span>
         </div>
       </div>
 
@@ -192,17 +192,46 @@
           <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Final Model</div>
           <div class="p-3 text-center" style="background: var(--secondary); border: 1px solid var(--chart-1)">
             <div class="text-[9px] uppercase tracking-wider mb-1" style="color: var(--chart-1)" x-text="stats?.model"></div>
-            <div class="flex justify-center gap-6">
+            <!-- Stratified model: show both sub-models -->
+            <template x-if="stats?.is_stratified && stats?.stratified">
               <div>
-                <div class="mono text-2xl font-bold" style="color: var(--chart-1)" x-text="sweepData?.cv_f1_mean?.toFixed(3) ?? '---'"></div>
-                <div class="text-[9px]" style="color: var(--muted-foreground)">CV F1 (5-fold)</div>
+                <div class="flex justify-center gap-4 mb-2">
+                  <div>
+                    <div class="mono text-2xl font-bold" x-text="stats?.val_metrics?.f1?.toFixed(3) ?? '---'"></div>
+                    <div class="text-[9px]" style="color: var(--muted-foreground)">Combined Val F1</div>
+                  </div>
+                </div>
+                <div class="flex justify-center gap-4 text-[9px]">
+                  <div class="p-1.5 flex-1" style="border: 1px solid var(--border)">
+                    <div class="font-semibold" style="color: var(--chart-1)">Completed</div>
+                    <div style="color: var(--muted-foreground)" x-text="stats.stratified.completed.model + ' | t=' + stats.stratified.completed.threshold.toFixed(2)"></div>
+                    <div class="mono font-bold" x-text="'F1 ' + (stats.stratified.completed.f1?.toFixed(3) ?? '---')"></div>
+                  </div>
+                  <div class="p-1.5 flex-1" style="border: 1px solid var(--border)">
+                    <div class="font-semibold" style="color: var(--chart-4)">Non-completed</div>
+                    <div style="color: var(--muted-foreground)" x-text="stats.stratified.non_completed.model + ' | t=' + stats.stratified.non_completed.threshold.toFixed(2)"></div>
+                    <div class="mono font-bold" x-text="'F1 ' + (stats.stratified.non_completed.f1?.toFixed(3) ?? '---')"></div>
+                  </div>
+                </div>
+                <div class="text-[9px] mt-2" style="color: var(--muted-foreground)" x-text="stats?.feature_count + ' features'"></div>
               </div>
+            </template>
+            <!-- Single model -->
+            <template x-if="!stats?.is_stratified">
               <div>
-                <div class="mono text-2xl font-bold" x-text="stats?.val_metrics?.f1?.toFixed(3) ?? '---'"></div>
-                <div class="text-[9px]" style="color: var(--muted-foreground)">Val F1</div>
+                <div class="flex justify-center gap-6">
+                  <div>
+                    <div class="mono text-2xl font-bold" style="color: var(--chart-1)" x-text="sweepData?.cv_f1_mean?.toFixed(3) ?? '---'"></div>
+                    <div class="text-[9px]" style="color: var(--muted-foreground)">CV F1 (5-fold)</div>
+                  </div>
+                  <div>
+                    <div class="mono text-2xl font-bold" x-text="stats?.val_metrics?.f1?.toFixed(3) ?? '---'"></div>
+                    <div class="text-[9px]" style="color: var(--muted-foreground)">Val F1</div>
+                  </div>
+                </div>
+                <div class="text-[9px] mt-2" style="color: var(--muted-foreground)" x-text="stats?.feature_count + ' features | Threshold: ' + stats?.threshold?.toFixed(2)"></div>
               </div>
-            </div>
-            <div class="text-[9px] mt-2" style="color: var(--muted-foreground)" x-text="stats?.feature_count + ' features | Threshold: ' + stats?.threshold?.toFixed(2)"></div>
+            </template>
           </div>
         </div>
         <div>
@@ -296,7 +325,7 @@
                     }[call.outcome]" x-text="call.outcome"></span>
                 </td>
                 <td class="py-1.5 px-3 text-right mono text-[11px]"
-                  :style="call.probability >= (stats?.threshold || 0.35) ? 'color: var(--destructive)' : 'color: var(--muted-foreground)'"
+                  :style="call.predicted_ticket ? 'color: var(--destructive)' : 'color: var(--muted-foreground)'"
                   x-text="(call.probability * 100).toFixed(1) + '%'"></td>
                 <td class="py-1.5 px-3 text-center">
                   <span x-show="call.predicted_ticket" style="color: var(--destructive)" class="text-[10px]">&#11044;</span>

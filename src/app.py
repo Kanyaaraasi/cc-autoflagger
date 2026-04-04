@@ -278,12 +278,14 @@ def get_stats():
     for c in all_calls:
         o = c["outcome"]
         if o not in outcome_counts:
-            outcome_counts[o] = {"total": 0, "flagged": 0, "actual": 0}
+            outcome_counts[o] = {"total": 0, "flagged": 0, "actual": 0, "correct": 0}
         outcome_counts[o]["total"] += 1
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
         if c.get("actual_ticket"):
             outcome_counts[o]["actual"] += 1
+            if c["predicted_ticket"]:
+                outcome_counts[o]["correct"] += 1
 
     config = s["config"]
     is_stratified = s["is_stratified"]

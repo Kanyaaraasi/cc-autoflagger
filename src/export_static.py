@@ -175,27 +175,48 @@ def build_api_data():
     for c in all_calls:
         o = c["outcome"]
         if o not in outcome_counts:
-            outcome_counts[o] = {"total": 0, "flagged": 0, "actual": 0}
+            outcome_counts[o] = {"total": 0, "flagged": 0, "actual": 0, "correct": 0}
         outcome_counts[o]["total"] += 1
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
         if c.get("actual_ticket"):
             outcome_counts[o]["actual"] += 1
+            if c["predicted_ticket"]:
+                outcome_counts[o]["correct"] += 1
 
     flagged = [c for c in all_calls if c["predicted_ticket"]]
-    model_name = config["best_model"].upper()
+
+    if is_stratified:
+        model_name = "STRATIFIED"
+        stratified_info = {
+            "completed": {
+                "model": config["completed"]["best_model"].upper(),
+                "threshold": config["completed"]["threshold"],
+                "f1": config["completed"].get("f1"),
+            },
+            "non_completed": {
+                "model": config["non_completed"]["best_model"].upper(),
+                "threshold": config["non_completed"]["threshold"],
+                "f1": config["non_completed"].get("f1"),
+            },
+        }
+    else:
+        model_name = config["best_model"].upper()
+        stratified_info = None
 
     stats = {
         "total_calls": len(all_calls),
         "flagged_calls": len(flagged),
         "flagged_pct": round(len(flagged) / len(all_calls) * 100, 1),
-        "threshold": threshold,
+        "threshold": config.get("threshold"),
         "val_metrics": {
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
             "precision": round(precision_score(y_val, val_pred, zero_division=0), 4),
             "recall": round(recall_score(y_val, val_pred, zero_division=0), 4),
         },
         "model": model_name,
+        "is_stratified": is_stratified,
+        "stratified": stratified_info,
         "feature_count": len(columns),
         "has_nli": False,
         "has_stacking": False,
