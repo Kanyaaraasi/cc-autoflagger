@@ -29,8 +29,9 @@ def pipeline():
     X_test[common_cols].to_parquet(OUTPUT_DIR / "X_test.parquet")
     log.info(f"Saved {len(common_cols)} features")
 
-    log.info("STEP 3: Training and evaluating")
-    train_and_evaluate()
+    log.info("STEP 3: Training stratified models (completed + non-completed)")
+    from .train import train_stratified
+    train_stratified()
 
     log.info("STEP 4: Generating submission")
     generate_submission()

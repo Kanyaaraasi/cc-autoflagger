@@ -267,5 +267,175 @@ def train_and_evaluate():
     return best_name, best_thresh, common_cols
 
 
+def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight):
+    """Train and evaluate a single group (completed or non-completed)."""
+    log.info(f"\n{'='*60}")
+    log.info(f"  {group_name}: {len(X_train)} train ({y_train.sum()} tickets), {len(X_val)} val ({y_val.sum()} tickets)")
+    log.info(f"{'='*60}")
+
+    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight)
+
+    xgb = XGBClassifier(
+        **xgb_params, scale_pos_weight=scale_pos_weight, subsample=0.8,
+        colsample_bytree=0.8, min_child_weight=3,
+        eval_metric="logloss", random_state=42,
+    )
+    xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+    xgb_proba = xgb.predict_proba(X_val)[:, 1]
+
+    lgb = LGBMClassifier(
+        **lgb_params, scale_pos_weight=scale_pos_weight, subsample=0.8,
+        colsample_bytree=0.8, min_child_samples=5,
+        random_state=42, verbose=-1,
+    )
+    lgb.fit(X_train, y_train)
+    lgb_proba = lgb.predict_proba(X_val)[:, 1]
+
+    ensemble_proba = 0.5 * xgb_proba + 0.5 * lgb_proba
+
+    results = {}
+    for name, proba in [("xgb", xgb_proba), ("lgb", lgb_proba), ("ensemble", ensemble_proba)]:
+        thresh, f1 = find_best_threshold(y_val, proba)
+        pred = (proba >= thresh).astype(int)
+        prec = precision_score(y_val, pred, zero_division=0)
+        rec = recall_score(y_val, pred, zero_division=0)
+        results[name] = {"f1": f1, "threshold": thresh, "proba": proba}
+        log.info(f"  {name}: F1={f1:.4f} P={prec:.4f} R={rec:.4f} (t={thresh:.2f}, flagged={pred.sum()})")
+
+    best_name = max(results, key=lambda k: results[k]["f1"])
+    best_model = xgb if best_name == "xgb" else (lgb if best_name == "lgb" else {"xgb": xgb, "lgb": lgb})
+    best_thresh = results[best_name]["threshold"]
+    best_proba = results[best_name]["proba"]
+    best_f1 = results[best_name]["f1"]
+
+    log.info(f"  *** Best: {best_name} F1={best_f1:.4f} ***")
+
+    return {
+        "model": best_model,
+        "model_type": best_name,
+        "threshold": best_thresh,
+        "proba": best_proba,
+        "f1": best_f1,
+        "xgb_params": xgb_params,
+        "lgb_params": lgb_params,
+    }
+
+
+def train_stratified():
+    """Train outcome-stratified models: separate for completed vs non-completed."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")
+    X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")
+
+    train_df, val_df, _ = load_all()
+    y_train = train_df[TARGET].astype(int).values
+    y_val = val_df[TARGET].astype(int).values
+
+    common_cols = sorted(set(X_train.columns) & set(X_val.columns))
+    X_train = X_train[common_cols]
+    X_val = X_val[common_cols]
+
+    log.info(f"Features: {len(common_cols)}")
+    log.info(f"Train: {len(X_train)} ({y_train.sum()} tickets)")
+    log.info(f"Val: {len(X_val)} ({y_val.sum()} tickets)")
+
+    # --- Split by outcome ---
+    comp_train = train_df["outcome"] == "completed"
+    comp_val = val_df["outcome"] == "completed"
+
+    groups = {
+        "completed": (comp_train.values, comp_val.values),
+        "non_completed": (~comp_train.values, ~comp_val.values),
+    }
+
+    models = {}
+    combined_pred = np.zeros(len(y_val), dtype=int)
+    combined_proba = np.zeros(len(y_val))
+
+    for group_name, (train_mask, val_mask) in groups.items():
+        Xtr = X_train[train_mask]
+        ytr = y_train[train_mask]
+        Xv = X_val[val_mask]
+        yv = y_val[val_mask]
+
+        neg, pos = (ytr == 0).sum(), (ytr == 1).sum()
+        spw = neg / max(pos, 1)
+
+        result = _train_group(Xtr, ytr, Xv, yv, group_name, spw)
+        models[group_name] = result
+
+        # Fill combined predictions
+        val_idx = np.where(val_mask)[0]
+        pred = (result["proba"] >= result["threshold"]).astype(int)
+        combined_pred[val_idx] = pred
+        combined_proba[val_idx] = result["proba"]
+
+    # --- Combined evaluation ---
+    log.info(f"\n{'='*60}")
+    log.info("  COMBINED RESULTS")
+    log.info(f"{'='*60}")
+
+    f1 = f1_score(y_val, combined_pred, zero_division=0)
+    prec = precision_score(y_val, combined_pred, zero_division=0)
+    rec = recall_score(y_val, combined_pred, zero_division=0)
+    caught = (combined_pred & y_val).sum()
+    flagged = combined_pred.sum()
+    wrong = (combined_pred & (y_val == 0)).sum()
+
+    log.info(f"  F1={f1:.4f}  Precision={prec:.4f}  Recall={rec:.4f}")
+    log.info(f"  Caught: {caught}/{y_val.sum()}  Flagged: {flagged}  Wrong: {wrong}")
+    log.info(f"\n{classification_report(y_val, combined_pred, target_names=['no_ticket', 'ticket'], zero_division=0)}")
+
+    # Per-group breakdown
+    for group_name, (_, val_mask) in groups.items():
+        yv = y_val[val_mask]
+        pv = combined_pred[val_mask]
+        g_caught = (pv & yv).sum()
+        g_flagged = pv.sum()
+        g_wrong = (pv & (yv == 0)).sum()
+        log.info(f"  {group_name:15s}: caught {g_caught}/{yv.sum()} flagged {g_flagged} wrong {g_wrong}")
+
+    # --- Error analysis ---
+    analyze_errors(y_val, combined_proba, 0.5, X_val, val_df["call_id"])
+
+    # --- Save ---
+    model_to_save = {
+        "completed": models["completed"]["model"],
+        "non_completed": models["non_completed"]["model"],
+    }
+    with open(MODEL_DIR / "model.pkl", "wb") as f:
+        pickle.dump(model_to_save, f)
+
+    with open(MODEL_DIR / "config.json", "w") as f:
+        json.dump({
+            "stratified": True,
+            "columns": common_cols,
+            "completed": {
+                "best_model": models["completed"]["model_type"],
+                "threshold": models["completed"]["threshold"],
+                "f1": round(models["completed"]["f1"], 4),
+                "xgb_params": models["completed"]["xgb_params"],
+                "lgb_params": models["completed"]["lgb_params"],
+            },
+            "non_completed": {
+                "best_model": models["non_completed"]["model_type"],
+                "threshold": models["non_completed"]["threshold"],
+                "f1": round(models["non_completed"]["f1"], 4),
+                "xgb_params": models["non_completed"]["xgb_params"],
+                "lgb_params": models["non_completed"]["lgb_params"],
+            },
+            "val_metrics": {
+                "f1": round(f1, 4),
+                "precision": round(prec, 4),
+                "recall": round(rec, 4),
+            },
+        }, f, indent=2)
+
+    log.info(f"\nStratified models saved to {MODEL_DIR}")
+    return f1
+
+
 def main():
-    train_and_evaluate()
+    train_stratified()
