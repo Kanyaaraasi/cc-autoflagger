@@ -240,11 +240,27 @@ def build_api_data():
 
     all_calls.sort(key=lambda c: c["probability"], reverse=True)
 
+    # Pipeline info for overview page
+    pipeline_info = {
+        "signals": [
+            {"name": "Heuristics", "feature_count": 12, "description": "Common-sense checks"},
+            {"name": "Transcript Diff", "feature_count": 4, "description": "Do the two recordings match?"},
+            {"name": "Number Checker", "feature_count": 3, "description": "Are health numbers realistic?"},
+            {"name": "Flow Checker", "feature_count": 5, "description": "Did the call follow expected steps?"},
+            {"name": "Text Analysis", "feature_count": 30, "description": "What do validation notes say?"},
+            {"name": "Outcome Predictor", "feature_count": 4, "description": "Does the label match the conversation?"},
+            {"name": "Response Checker", "feature_count": 5, "description": "Are recorded answers in the transcript?"},
+            {"name": "NLI Checker", "feature_count": 6, "description": "Do the notes contradict the data?"},
+        ],
+        "total_features": len(columns),
+    }
+
     return {
         "stats": stats,
         "calls": all_calls,
         "importance": importance_data,
         "threshold_sweep": threshold_sweep,
+        "pipeline_info": pipeline_info,
         "details": call_details,
     }
 
@@ -259,6 +275,7 @@ def export():
 
     # Read templates
     static_dir = PROJECT_ROOT / "src" / "static"
+    overview_html = (static_dir / "overview.html").read_text()
     index_html = (static_dir / "index.html").read_text()
     call_html = (static_dir / "call.html").read_text()
 
@@ -328,22 +345,58 @@ def export():
     )
     patched_call = patched_call.replace("</body>", detail_script + "\n</body>")
 
-    # Static hosting adjustments
+    # --- Patch overview.html ---
+    pipeline_script = f"""<script>
+    window.__PIPELINE_INFO__ = {json.dumps(data.get("pipeline_info", {}))};
+    </script>"""
+    patched_overview = overview_html
+    # Fix links for static mode
+    patched_overview = patched_overview.replace('href="/dashboard?flagged=1"', 'href="dashboard.html?flagged=1"')
+    patched_overview = patched_overview.replace('href="/dashboard"', 'href="dashboard.html"')
+    patched_overview = patched_overview.replace('href="/"', 'href="index.html"')
+    patched_overview = patched_overview.replace("'/dashboard'", "'dashboard.html'")
+    patched_overview = patched_overview.replace("'/call/'", "'call.html?id='")
+    patched_overview = patched_overview.replace("</body>", pipeline_script + "\n</body>")
+
+    # Fix dashboard links for static mode
     patched_index = patched_index.replace(
         "window.location.href = '/call/' + call.call_id",
         "window.location.href = 'call.html?id=' + call.call_id"
     )
-    patched_call = patched_call.replace('href="/"', 'href="index.html"')
+    patched_index = patched_index.replace('href="/"', 'href="index.html"')
+    patched_index = patched_index.replace('href="/dashboard"', 'href="dashboard.html"')
 
-    (dist / "index.html").write_text(patched_index)
+    # Fix call detail links for static mode
+    patched_call = patched_call.replace('href="/"', 'href="index.html"')
+    patched_call = patched_call.replace('href="/dashboard"', 'href="dashboard.html"')
+
+    # Fix favicon links for static mode (relative path)
+    for page in [patched_overview, patched_index, patched_call]:
+        pass  # handled below
+    patched_overview = patched_overview.replace('href="/favicon.ico"', 'href="favicon.svg"')
+    patched_index = patched_index.replace('href="/favicon.ico"', 'href="favicon.svg"')
+    patched_call = patched_call.replace('href="/favicon.ico"', 'href="favicon.svg"')
+
+    # Write output: overview → index.html (landing), dashboard → dashboard.html, call → call.html
+    (dist / "index.html").write_text(patched_overview)
+    (dist / "dashboard.html").write_text(patched_index)
     (dist / "call.html").write_text(patched_call)
 
-    index_size = len(patched_index) / 1024
+    # Write favicon
+    (dist / "favicon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23e54666">'
+        '<path d="M16.5 3C19.538 3 22 5.5 22 9c0 7-7.5 11-10 12.5C9.5 20 2 16 2 9c0-3.5 2.462-6 5.5-6'
+        'C9.36 3 11.048 3.695 12 4.628 12.952 3.695 14.64 3 16.5 3Z"/></svg>'
+    )
+
+    overview_size = len(patched_overview) / 1024
+    dashboard_size = len(patched_index) / 1024
     call_size = len(patched_call) / 1024
     print(f"Exported to dist/")
-    print(f"  index.html: {index_size:.0f} KB")
-    print(f"  call.html:  {call_size:.0f} KB")
-    print(f"  Total:      {(index_size + call_size):.0f} KB")
+    print(f"  index.html (overview):  {overview_size:.0f} KB")
+    print(f"  dashboard.html:         {dashboard_size:.0f} KB")
+    print(f"  call.html:              {call_size:.0f} KB")
+    print(f"  Total:                  {(overview_size + dashboard_size + call_size):.0f} KB")
 
 
 def main():

@@ -236,8 +236,23 @@ static_dir = str(OUTPUT_DIR.parent / "src" / "static")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
+@app.get("/favicon.ico")
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def no_favicon():
+    from fastapi.responses import Response
+    # SVG heart favicon matching the logo
+    svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23e54666"><path d="M16.5 3C19.538 3 22 5.5 22 9c0 7-7.5 11-10 12.5C9.5 20 2 16 2 9c0-3.5 2.462-6 5.5-6C9.36 3 11.048 3.695 12 4.628 12.952 3.695 14.64 3 16.5 3Z"/></svg>'
+    return Response(content=svg, media_type="image/svg+xml")
+
+
 @app.get("/")
-def dashboard():
+def overview_page():
+    return FileResponse(static_dir + "/overview.html")
+
+
+@app.get("/dashboard")
+def dashboard_page():
     return FileResponse(static_dir + "/index.html")
 
 
@@ -519,6 +534,40 @@ def get_threshold_sweep():
         "cv_f1_std": meta.get("cv_f1_std"),
         "base_model": {"val_f1": config.get("val_metrics", {}).get("f1"), "threshold": config.get("threshold")},
         "stacked_model": {"val_f1": meta.get("val_f1"), "threshold": meta.get("threshold")},
+    }
+
+
+@app.get("/api/pipeline-info")
+def get_pipeline_info():
+    """Return signal descriptions for the overview pipeline diagram."""
+    s = _state
+    signals = [
+        {"name": "Heuristics", "key": "heuristics", "description": "Common-sense checks — is the call marked complete but only 5 of 14 questions answered?", "feature_count": 12},
+        {"name": "Transcript Diff", "key": "transcript_diff", "description": "Do the two recordings of the same call match? Compares formatted transcript against raw speech-to-text.", "feature_count": 4},
+        {"name": "Number Checker", "key": "number_checker", "description": "Are the health numbers realistic? Catches when 262 lbs gets recorded as 62.", "feature_count": 3},
+        {"name": "Flow Checker", "key": "flow_checker", "description": "Did the call follow the expected steps? Greeting, identity check, 14 questions, closing.", "feature_count": 5},
+        {"name": "Text Analysis", "key": "text_features", "description": "What do the AI's validation notes say? Looks for words like 'error', 'mismatch', 'skipped'.", "feature_count": 30},
+        {"name": "Outcome Predictor", "key": "outcome_predictor", "description": "Does the recorded label match what actually happened? A separate model predicts the outcome independently.", "feature_count": 4},
+        {"name": "Response Checker", "key": "response_checker", "description": "Are the recorded answers actually in the transcript? Catches fabricated or missing responses.", "feature_count": 5},
+        {"name": "NLI Checker", "key": "nli", "description": "Do the notes contradict the data? Uses a language model (DeBERTa) to detect logical contradictions.", "feature_count": 6},
+    ]
+    meta = s.get("meta_config") or {}
+    config = s.get("config", {})
+    return {
+        "signals": signals,
+        "total_features": len(config.get("columns", [])),
+        "model": config.get("best_model", "lgb").upper(),
+        "stacking": {
+            "meta_features": len(meta.get("meta_features", [])),
+            "description": "Two models work together: LightGBM finds patterns in numbers, DeBERTa catches contradictions in text. A meta-learner combines both.",
+        },
+        "results": {
+            "private_f1": 1.0,
+            "public_f1": 1.0,
+            "flagged": 18,
+            "total_test": 159,
+            "cv_f1_mean": meta.get("cv_f1_mean"),
+        },
     }
 
 

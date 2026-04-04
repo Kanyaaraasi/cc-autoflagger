@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <title>CareCaller Auto-Flagger</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
@@ -66,16 +67,14 @@
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 shrink-0" style="color: var(--primary)">
         <path d="M16.5 3C19.538 3 22 5.5 22 9c0 7-7.5 11-10 12.5C9.5 20 2 16 2 9c0-3.5 2.462-6 5.5-6C9.36 3 11.048 3.695 12 4.628 12.952 3.695 14.64 3 16.5 3Zm-3.043 9.408L12 14.4l-1.457-1.992-1.2-1.637L8.2 12.3l-1.2 1.637H3.522A14.455 14.455 0 0 0 6 18.118L12 21.5l6-3.382c1.072-.768 1.835-1.476 2.478-2.218h-3.478l-1.2-1.637-1.2 1.637-1.457-1.992-.686-.937-.686.937L12 16l-1.457-1.992-1.086-1.483 1.086-1.483L12 9.05l1.457 1.992 1.086 1.483-1.086 1.483Z"/>
       </svg>
-      <span class="font-bold" style="color: var(--foreground)">CARECALLER</span>
-      <span style="color: var(--muted-foreground)">(by <a href="https://github.com/vkrishna03" target="_blank" class="hover:opacity-80" style="color: var(--primary)"><span class="hidden sm:inline">Krishna Kodimala</span><span class="sm:hidden">Kris</span></a>)</span>
+      <a href="/" class="font-bold hover:opacity-80" style="color: var(--foreground)">CARECALLER</a>
       <span style="color: var(--border)">│</span>
-      <span class="hidden sm:inline">AUTOFLAGGER</span>
+      <a href="/" class="hover:opacity-80" style="color: var(--muted-foreground)">Overview</a>
+      <a href="/dashboard" class="hover:opacity-80 font-semibold" style="color: var(--foreground)">Dashboard</a>
       <span class="hidden md:inline" style="color: var(--border)">│</span>
       <span class="hidden md:inline" x-show="stats" x-text="stats?.model"></span>
       <span class="hidden lg:inline" style="color: var(--border)">│</span>
       <span class="hidden lg:inline" x-show="stats" x-text="stats?.feature_count + ' features'"></span>
-      <span class="hidden md:inline" style="color: var(--border)">│</span>
-      <span class="hidden md:inline" x-show="stats">thresh: <span style="color: var(--chart-4)" x-text="stats?.threshold?.toFixed(3)"></span></span>
     </div>
     <div class="flex items-center gap-3">
       <span class="w-1.5 h-1.5 rounded-full inline-block" style="background: var(--chart-1); animation: pulse 2s infinite"></span>
@@ -126,7 +125,7 @@
             <div>
               <div class="flex justify-between text-xs mb-0.5">
                 <span class="mono" style="color: var(--muted-foreground)" x-text="label"></span>
-                <span class="mono font-bold" x-text="data.count"></span>
+                <span class="mono font-bold" :style="'color:' + data.color" x-text="data.count"></span>
               </div>
               <div class="h-1.5 w-full" style="background: var(--secondary)">
                 <div class="h-full bar-fill" :style="'width:' + (data.count / (stats?.total_calls || 1) * 100) + '%; background:' + data.color"></div>
@@ -139,18 +138,18 @@
 
       <!-- OUTCOMES -->
       <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Outcomes
-          <span class="ml-2 normal-case tracking-normal font-normal"><span style="color: var(--destructive)">&#9608;</span> flagged <span style="color: var(--muted-foreground); opacity: 0.4">&#9608;</span> total</span>
-        </div>
+        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Outcomes (flagged rate)</div>
         <div class="space-y-1.5">
-          <template x-for="[outcome, data] in Object.entries(stats?.outcome_breakdown || {}).sort((a,b) => b[1].total - a[1].total)" :key="outcome">
+          <template x-for="[outcome, data] in Object.entries(stats?.outcome_breakdown || {}).sort((a,b) => b[1].flagged/b[1].total - a[1].flagged/a[1].total)" :key="outcome">
             <div class="flex items-center gap-2 text-xs">
               <span class="w-20 truncate mono" style="color: var(--muted-foreground)" x-text="outcome"></span>
               <div class="flex-1 h-3 relative" style="background: var(--secondary)">
-                <div class="h-full bar-fill absolute top-0 left-0" style="background: var(--muted-foreground); opacity: 0.3" :style="'width:' + (data.total / (stats?.total_calls || 1) * 100) + '%'"></div>
-                <div class="h-full bar-fill absolute top-0 left-0 z-10" style="background: var(--destructive)" :style="'width:' + (data.flagged / (stats?.total_calls || 1) * 100) + '%'"></div>
+                <div class="h-full bar-fill absolute top-0 left-0"
+                  :style="'width:' + (data.flagged / (data.total || 1) * 100) + '%; background:' + (data.flagged > 0 ? 'var(--destructive)' : 'var(--chart-1)') + '; opacity: 0.8'"></div>
               </div>
-              <span class="w-12 text-right mono text-[11px]" style="color: var(--muted-foreground)" x-text="data.flagged + '/' + data.total"></span>
+              <span class="w-20 text-right mono text-[10px]"
+                :style="data.flagged > 0 ? 'color: var(--destructive)' : 'color: var(--muted-foreground)'"
+                x-text="data.flagged > 0 ? Math.round(data.flagged/data.total*100) + '% (' + data.flagged + ')' : '0%'"></span>
             </div>
           </template>
         </div>
@@ -164,179 +163,56 @@
             <div class="flex-1 flex flex-col justify-end h-full relative group cursor-default"
               :title="bin.label + ': ' + bin.count + ' calls'">
               <div class="w-full transition-all duration-300"
-                :style="'height:' + Math.max(bin.count > 0 ? 8 : 0, bin.count / maxBin * 100) + '%; background:' + (bin.midpoint >= (selectedThreshold ?? stats?.threshold ?? 0.35) ? 'var(--destructive)' : 'var(--chart-1)') + '; opacity: 0.75'">
+                :style="'height:' + Math.max(bin.count > 0 ? 8 : 0, bin.count / maxBin * 100) + '%; background:' + (bin.midpoint >= (stats?.threshold ?? 0.35) ? 'var(--destructive)' : 'var(--chart-1)') + '; opacity: 0.75'">
               </div>
               <!-- threshold marker: only on the single bin that contains the threshold -->
-              <div x-show="(selectedThreshold ?? stats?.threshold ?? 0.35) >= (bin.midpoint - 0.025) && (selectedThreshold ?? stats?.threshold ?? 0.35) < (bin.midpoint + 0.025)" class="absolute top-0 bottom-0 w-0.5" style="background: var(--primary); left: 50%; opacity: 0.9"></div>
+              <div x-show="(stats?.threshold ?? 0.35) >= (bin.midpoint - 0.025) && (stats?.threshold ?? 0.35) < (bin.midpoint + 0.025)" class="absolute top-0 bottom-0 w-0.5" style="background: var(--primary); left: 50%; opacity: 0.9"></div>
             </div>
           </template>
         </div>
         <div class="flex justify-between text-[10px] mono mt-1.5 px-0.5" style="color: var(--muted-foreground)">
           <span>0</span>
-          <span style="color: var(--primary)">t=<span x-text="(selectedThreshold ?? stats?.threshold ?? 0).toFixed(2)"></span></span>
+          <span style="color: var(--primary)">t=<span x-text="(stats?.threshold ?? 0).toFixed(2)"></span></span>
           <span>1</span>
         </div>
       </div>
     </div>
 
-    <!-- THRESHOLD / CONFUSION / COMPARISON ROW -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3" x-show="sweepData">
-
-      <!-- THRESHOLD TUNER -->
-      <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Threshold Tuner</div>
-        <div class="flex items-center gap-3 mb-3">
-          <input type="range" min="5" max="95" step="5"
-            class="flex-1 accent-[var(--primary)] h-1.5 cursor-pointer"
-            :value="(selectedThreshold ?? 0.35) * 100"
-            @input="selectedThreshold = parseInt($event.target.value) / 100">
-          <span class="mono text-lg font-bold" style="color: var(--primary)" x-text="(selectedThreshold ?? 0.35).toFixed(2)"></span>
-        </div>
-        <div class="grid grid-cols-4 gap-2 text-center" x-show="currentSweep()">
-          <template x-for="m in [
-            { label: 'F1', key: 'f1', color: 'var(--chart-1)' },
-            { label: 'PREC', key: 'precision', color: '' },
-            { label: 'REC', key: 'recall', color: '' },
-            { label: 'FLAG', key: 'flagged', color: 'var(--destructive)' },
-          ]" :key="m.key">
-            <div>
-              <div class="text-[9px] uppercase tracking-wider" style="color: var(--muted-foreground)" x-text="m.label"></div>
-              <div class="mono text-sm font-bold" :style="m.color ? 'color:' + m.color : ''"
-                x-text="m.key === 'flagged' ? currentSweep()?.[m.key] : currentSweep()?.[m.key]?.toFixed(3)"></div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <!-- CONFUSION MATRIX -->
-      <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Confusion Matrix</div>
-        <div class="grid grid-cols-2 gap-1 max-w-[200px] mx-auto" x-show="currentSweep()">
-          <div class="p-2 text-center" style="background: oklch(0.55 0.17 155 / 15%)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--chart-1)">TP</div>
-            <div class="mono text-lg font-bold" style="color: var(--chart-1)" x-text="currentSweep()?.tp"></div>
-          </div>
-          <div class="p-2 text-center" style="background: oklch(0.65 0.22 25 / 15%)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--destructive)">FP</div>
-            <div class="mono text-lg font-bold" style="color: var(--destructive)" x-text="currentSweep()?.fp"></div>
-          </div>
-          <div class="p-2 text-center" style="background: oklch(0.60 0.12 50 / 15%)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--chart-4)">FN</div>
-            <div class="mono text-lg font-bold" style="color: var(--chart-4)" x-text="currentSweep()?.fn"></div>
-          </div>
-          <div class="p-2 text-center" style="background: oklch(0.55 0.17 155 / 8%)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--chart-2)">TN</div>
-            <div class="mono text-lg font-bold" style="color: var(--chart-2)" x-text="currentSweep()?.tn"></div>
-          </div>
-        </div>
-        <div class="text-[9px] text-center mt-2" style="color: var(--muted-foreground)">Validation set (144 calls)</div>
-      </div>
-
-      <!-- MODEL COMPARISON + CV -->
-      <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Model Comparison</div>
-        <div class="flex gap-3 mb-3">
-          <div class="flex-1 text-center p-2" style="background: var(--secondary)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--muted-foreground)">Base LightGBM</div>
-            <div class="mono text-lg font-bold" x-text="stats?.val_metrics?.base_f1?.toFixed(3) ?? '---'"></div>
-          </div>
-          <div class="flex-1 text-center p-2" style="background: var(--secondary); border: 1px solid var(--chart-1)">
-            <div class="text-[9px] uppercase tracking-wider" style="color: var(--chart-1)">Stacked (NLI+LGB)</div>
-            <div class="mono text-lg font-bold" style="color: var(--chart-1)" x-text="stats?.val_metrics?.f1?.toFixed(3) ?? '---'"></div>
-          </div>
-        </div>
-        <div class="text-[10px] uppercase tracking-widest mb-2 font-semibold" style="color: var(--muted-foreground)">CV Folds</div>
-        <div class="flex items-end gap-1 h-10 mb-1" x-show="stats?.cv_scores">
-          <template x-for="(score, i) in (stats?.cv_scores || [])" :key="i">
-            <div class="flex-1 flex flex-col items-center gap-0.5">
-              <div class="w-full" style="background: var(--chart-1); opacity: 0.7"
-                :style="'height:' + (score / 1.0 * 100) + '%'"></div>
-              <span class="text-[8px] mono" style="color: var(--muted-foreground)" x-text="'F' + (i+1)"></span>
-            </div>
-          </template>
-        </div>
-        <div class="text-[9px] mono text-center" style="color: var(--muted-foreground)" x-show="stats?.cv_scores"
-          x-text="'Mean: ' + (stats?.cv_scores?.reduce((a,b) => a+b, 0) / (stats?.cv_scores?.length || 1)).toFixed(3) + ' +/- ' + Math.sqrt(stats?.cv_scores?.reduce((s, v, _, a) => s + Math.pow(v - a.reduce((x,y) => x+y,0)/a.length, 2), 0) / (stats?.cv_scores?.length || 1)).toFixed(3)">
-        </div>
-      </div>
-    </div>
-
-    <!-- PIPELINE DIAGRAM -->
-    <div class="panel p-3">
-      <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Pipeline</div>
-      <div class="flex flex-wrap items-center gap-1.5 text-xs">
-        <!-- Signal extractors -->
-        <div class="flex flex-wrap gap-1">
-          <template x-for="sig in [
-            { id: 'heuristics', label: 'Heuristics', desc: 'Rule-based signal extraction: silence ratio, talk-over, hold time' },
-            { id: 'transcript_diff', label: 'Transcript Diff', desc: 'Edit-distance and token overlap between agent script and actual transcript' },
-            { id: 'numbers', label: 'Numbers', desc: 'Numeric features: call duration, transfer count, hold count' },
-            { id: 'flow', label: 'Flow', desc: 'Conversation flow metrics: turn count, interruption patterns' },
-            { id: 'text', label: 'Text', desc: 'Text-based features: sentiment scores, keyword flags' },
-            { id: 'outcome', label: 'Outcome', desc: 'Call outcome encoding: completed, escalated, opted_out, etc.' },
-            { id: 'response', label: 'Response', desc: 'Response quality: completeness, relevance, coherence scores' },
-            { id: 'nli', label: 'NLI', desc: 'Natural language inference contradiction scores via DeBERTa' },
-          ]" :key="sig.id">
-            <button class="px-1.5 py-0.5 mono text-[10px] cursor-pointer transition"
-              :style="expandedPipeline === sig.id ? 'background: var(--primary); color: var(--card)' : 'background: var(--secondary); color: var(--muted-foreground)'"
-              @click="expandedPipeline = expandedPipeline === sig.id ? null : sig.id"
-              x-text="sig.label"></button>
-          </template>
-        </div>
-        <span class="mono" style="color: var(--muted-foreground)">&#8594;</span>
-        <span class="px-1.5 py-0.5 mono text-[10px]" style="background: var(--secondary); color: var(--muted-foreground)" x-text="(stats?.feature_count || 146) + ' features'"></span>
-        <span class="mono" style="color: var(--muted-foreground)">&#8594;</span>
-        <span class="px-1.5 py-0.5 mono text-[10px]" style="background: var(--secondary); color: var(--muted-foreground)">LightGBM</span>
-        <span class="mono" style="color: var(--muted-foreground)">&#8594;</span>
-        <span class="px-1.5 py-0.5 mono text-[10px]" style="background: var(--secondary); color: var(--muted-foreground)">ml_proba</span>
-        <span class="mono" style="color: var(--muted-foreground)">&#8594;</span>
-        <button class="px-1.5 py-0.5 mono text-[10px] cursor-pointer transition"
-          :style="expandedPipeline === 'meta' ? 'background: var(--primary); color: var(--card)' : 'background: var(--secondary); color: var(--muted-foreground)'"
-          @click="expandedPipeline = expandedPipeline === 'meta' ? null : 'meta'"
-          x-text="'Meta-learner (' + (metaLearner?.length || 15) + ')'"></button>
-        <span class="mono" style="color: var(--muted-foreground)">&#8594;</span>
-        <span class="px-1.5 py-0.5 mono text-[10px] font-bold" style="background: var(--secondary); color: var(--foreground)">Prediction</span>
-      </div>
-
-      <!-- Expanded signal description -->
-      <template x-for="sig in [
-        { id: 'heuristics', desc: 'Rule-based signal extraction: silence ratio, talk-over, hold time' },
-        { id: 'transcript_diff', desc: 'Edit-distance and token overlap between agent script and actual transcript' },
-        { id: 'numbers', desc: 'Numeric features: call duration, transfer count, hold count' },
-        { id: 'flow', desc: 'Conversation flow metrics: turn count, interruption patterns' },
-        { id: 'text', desc: 'Text-based features: sentiment scores, keyword flags' },
-        { id: 'outcome', desc: 'Call outcome encoding: completed, escalated, opted_out, etc.' },
-        { id: 'response', desc: 'Response quality: completeness, relevance, coherence scores' },
-        { id: 'nli', desc: 'Natural language inference contradiction scores via DeBERTa' },
-      ]" :key="sig.id">
-        <div x-show="expandedPipeline === sig.id" class="mt-2 px-2 py-1.5 text-[10px]" style="background: var(--secondary); color: var(--muted-foreground); border-left: 2px solid var(--primary)">
-          <span class="font-bold" style="color: var(--foreground)" x-text="sig.id"></span>: <span x-text="sig.desc"></span>
-        </div>
-      </template>
-
-      <!-- Meta-learner coefficients -->
-      <div x-show="expandedPipeline === 'meta' && metaLearner" class="mt-2 px-2 py-1.5" style="background: var(--secondary); border-left: 2px solid var(--primary)">
-        <div class="text-[9px] uppercase tracking-wider mb-1.5 font-semibold" style="color: var(--muted-foreground)">Meta-learner Coefficients</div>
-        <div class="space-y-0.5">
-          <template x-for="coef in metaLearner" :key="coef.feature">
-            <div class="flex items-center gap-1.5 text-[10px]">
-              <span class="w-32 truncate mono" style="color: var(--muted-foreground)" x-text="coef.feature"></span>
-              <div class="flex-1 h-2 flex items-center relative">
-                <div class="absolute left-1/2 top-0 bottom-0 w-px" style="background: var(--border)"></div>
-                <!-- Negative bar (green, extends left from center) -->
-                <div x-show="coef.weight < 0" class="absolute h-full"
-                  :style="'right: 50%; width:' + Math.min(Math.abs(coef.weight) / (metaLearner.reduce((m, c) => Math.max(m, Math.abs(c.weight)), 0.01)) * 50, 50) + '%; background: var(--chart-1); opacity: 0.7'"></div>
-                <!-- Positive bar (red, extends right from center) -->
-                <div x-show="coef.weight >= 0" class="absolute h-full"
-                  :style="'left: 50%; width:' + Math.min(Math.abs(coef.weight) / (metaLearner.reduce((m, c) => Math.max(m, Math.abs(c.weight)), 0.01)) * 50, 50) + '%; background: var(--destructive); opacity: 0.7'"></div>
+    <!-- MODEL COMPARISON + CV FOLDS -->
+    <div class="panel p-3" x-show="sweepData">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Final Model</div>
+          <div class="p-3 text-center" style="background: var(--secondary); border: 1px solid var(--chart-1)">
+            <div class="text-[9px] uppercase tracking-wider mb-1" style="color: var(--chart-1)" x-text="stats?.model"></div>
+            <div class="flex justify-center gap-6">
+              <div>
+                <div class="mono text-2xl font-bold" style="color: var(--chart-1)" x-text="sweepData?.cv_f1_mean?.toFixed(3) ?? '---'"></div>
+                <div class="text-[9px]" style="color: var(--muted-foreground)">CV F1 (5-fold)</div>
               </div>
-              <span class="w-14 text-right mono text-[9px]" :style="coef.weight >= 0 ? 'color: var(--destructive)' : 'color: var(--chart-1)'" x-text="(coef.weight >= 0 ? '+' : '') + coef.weight.toFixed(3)"></span>
+              <div>
+                <div class="mono text-2xl font-bold" x-text="stats?.val_metrics?.f1?.toFixed(3) ?? '---'"></div>
+                <div class="text-[9px]" style="color: var(--muted-foreground)">Val F1</div>
+              </div>
             </div>
-          </template>
+            <div class="text-[9px] mt-2" style="color: var(--muted-foreground)" x-text="stats?.feature_count + ' features | Threshold: ' + stats?.threshold?.toFixed(2)"></div>
+          </div>
         </div>
-        <div class="flex justify-between text-[8px] mono mt-1" style="color: var(--muted-foreground)">
-          <span style="color: var(--chart-1)">&#8592; clean</span>
-          <span style="color: var(--destructive)">ticket &#8594;</span>
+        <div>
+          <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Cross-Validation Stability (5 Folds)</div>
+          <div class="flex items-end gap-2 h-16 mb-1" x-show="sweepData?.cv_folds?.length">
+            <template x-for="(score, i) in (sweepData?.cv_folds || [])" :key="i">
+              <div class="flex-1 flex flex-col items-center gap-1">
+                <span class="text-[9px] mono font-bold" :style="score >= 1.0 ? 'color: var(--chart-1)' : 'color: var(--chart-4)'" x-text="score.toFixed(3)"></span>
+                <div class="w-full rounded-sm"
+                  :style="'height:' + Math.max(20, ((score - 0.9) / 0.1) * 100) + '%; background:' + (score >= 1.0 ? 'var(--chart-1)' : 'var(--chart-4)') + '; opacity: 0.8'"></div>
+                <span class="text-[9px] mono" style="color: var(--muted-foreground)" x-text="'Fold ' + (i+1)"></span>
+              </div>
+            </template>
+          </div>
+          <div class="text-[9px] mono text-center" style="color: var(--muted-foreground)" x-show="sweepData?.cv_folds?.length"
+            x-text="'Mean: ' + sweepData?.cv_f1_mean?.toFixed(3) + ' +/- ' + sweepData?.cv_f1_std?.toFixed(3)">
+          </div>
         </div>
       </div>
     </div>
@@ -479,7 +355,6 @@
         page: 1,
         perPage: 20,
         sweepData: null,
-        selectedThreshold: null,
         metaLearner: null,
         expandedPipeline: null,
 
@@ -513,10 +388,6 @@
           return result;
         },
 
-        currentSweep() {
-          if (!this.sweepData || this.selectedThreshold == null) return null;
-          return this.sweepData.find(s => Math.abs(s.threshold - this.selectedThreshold) < 0.001) || null;
-        },
 
         async init() {
           const [statsRes, callsRes, impRes, sweepRes] = await Promise.all([
@@ -530,13 +401,12 @@
           this.importance = impRes.features;
           this.metaLearner = impRes.meta_learner;
           this.sweepData = sweepRes;
-          if (sweepRes && statsRes?.threshold) {
-            const nearest = sweepRes.reduce((best, s) =>
-              Math.abs(s.threshold - statsRes.threshold) < Math.abs(best.threshold - statsRes.threshold) ? s : best
-            , sweepRes[0]);
-            this.selectedThreshold = nearest.threshold;
-          }
           this.buildHistogram(callsRes);
+          // Check URL params for flagged filter
+          if (new URLSearchParams(window.location.search).get('flagged')) {
+            this.flaggedOnly = true;
+            this.loadCalls();
+          }
         },
 
         async loadCalls() {
