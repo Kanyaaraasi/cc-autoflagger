@@ -291,9 +291,9 @@ def get_stats():
         if "nli_max_contradiction" in all_nli.columns:
             scores = all_nli["nli_max_contradiction"]
             nli_summary = {
-                "High (>0.7)": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
-                "Medium (0.3-0.7)": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
-                "Low (<0.3)": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
+                "Strong contradiction": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
+                "Mild contradiction": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
+                "No contradiction": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
             }
 
     return {

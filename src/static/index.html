@@ -109,7 +109,7 @@
           <div class="text-[10px] uppercase tracking-widest mb-1" style="color: var(--muted-foreground)" x-text="s.label"></div>
           <div class="text-xl font-bold mono" :style="s.color ? 'color:' + s.color : ''" x-text="s.value"></div>
           <div x-show="s.sub" class="text-[10px] mono mt-0.5" style="color: var(--muted-foreground)" x-text="s.sub"></div>
-          <div class="text-[9px] mt-0.5" style="color: var(--muted-foreground); opacity: 0.7" x-text="s.tip"></div>
+          <div class="text-[9px] mt-0.5 hidden md:block" style="color: var(--muted-foreground)" x-text="s.tip"></div>
         </div>
       </template>
     </div>
@@ -142,7 +142,7 @@
         <div class="space-y-1.5">
           <template x-for="[outcome, data] in Object.entries(stats?.outcome_breakdown || {}).sort((a,b) => b[1].flagged/b[1].total - a[1].flagged/a[1].total)" :key="outcome">
             <div class="flex items-center gap-2 text-xs">
-              <span class="w-20 truncate mono" style="color: var(--muted-foreground)" x-text="outcome"></span>
+              <span class="w-24 truncate mono" style="color: var(--muted-foreground)" x-text="outcome.replace(/_/g, ' ')"></span>
               <div class="flex-1 h-3 relative" style="background: var(--secondary)">
                 <div class="h-full bar-fill absolute top-0 left-0"
                   :style="'width:' + (data.flagged / (data.total || 1) * 100) + '%; background:' + (data.flagged > 0 ? 'var(--destructive)' : 'var(--chart-1)') + '; opacity: 0.8'"></div>
@@ -157,7 +157,7 @@
 
       <!-- HISTOGRAM -->
       <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Confidence Distribution</div>
+        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">How Sure Is the Model?</div>
         <div class="flex items-end gap-px h-28">
           <template x-for="(bin, i) in histogram" :key="i">
             <div class="flex-1 flex flex-col justify-end h-full relative group cursor-default"
@@ -219,19 +219,18 @@
 
     <!-- FEATURE IMPORTANCE -->
     <div class="panel p-3">
-      <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Feature Importance</div>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6">
-        <template x-for="col in [0, 1, 2]" :key="col">
+      <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Top Features (what the model looks at most)</div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+        <template x-for="col in [0, 1]" :key="col">
           <div class="space-y-0.5">
-            <template x-for="(feat, j) in importance.slice(col * 10, col * 10 + 10)" :key="feat.feature">
+            <template x-for="(feat, j) in importance.slice(col * 8, col * 8 + 8)" :key="feat.feature">
               <div class="flex items-center gap-2 py-0.5">
-                <span class="w-5 text-right text-[10px] mono shrink-0" style="color: var(--muted-foreground)" x-text="'#' + (col * 10 + j + 1)"></span>
-                <span class="w-44 truncate text-xs" style="color: var(--muted-foreground)" x-text="feat.feature"></span>
+                <span class="w-5 text-right text-[10px] mono shrink-0" style="color: var(--muted-foreground)" x-text="'#' + (col * 8 + j + 1)"></span>
+                <span class="w-48 truncate text-xs" style="color: var(--muted-foreground)" x-text="readableFeature(feat.feature)"></span>
                 <div class="flex-1 h-1.5" style="background: var(--secondary)">
-                  <div class="h-full bar-fill" style="background: var(--muted-foreground); opacity: 0.5"
-                    :style="'width:' + (feat.importance / (importance[0]?.importance || 1) * 100) + '%'"></div>
+                  <div class="h-full bar-fill" :style="'width:' + (feat.importance / (importance[0]?.importance || 1) * 100) + '%; background:' + featureColor(feat.feature)"></div>
                 </div>
-                <span class="w-10 text-right text-[10px] mono shrink-0" style="color: var(--muted-foreground)" x-text="feat.importance.toFixed(3)"></span>
+                <span class="w-10 text-right text-[10px] mono shrink-0" style="color: var(--muted-foreground)" x-text="feat.importance.toFixed(0)"></span>
               </div>
             </template>
           </div>
@@ -241,8 +240,8 @@
 
     <!-- CALL LOG -->
     <div class="panel">
-      <div class="flex items-center justify-between px-3 py-2" style="border-bottom: 1px solid var(--border)">
-        <div class="text-[10px] uppercase tracking-widest font-semibold" style="color: var(--muted-foreground)">Call Log</div>
+      <div class="flex items-center justify-between px-3 py-2 gap-2" style="border-bottom: 1px solid var(--border)">
+        <div class="text-[10px] uppercase tracking-widest font-semibold shrink-0" style="color: var(--muted-foreground)">Call Log</div>
         <div class="flex items-center gap-1">
           <template x-for="s in ['all', 'train', 'val', 'test']" :key="s">
             <button @click="filterSplit = s; page = 1; loadCalls()"
@@ -262,11 +261,11 @@
             <tr style="border-bottom: 1px solid var(--border); color: var(--muted-foreground)" class="text-[10px] uppercase tracking-wider">
               <th class="text-left py-1.5 px-3 font-medium">Call ID</th>
               <th class="text-left py-1.5 px-3 font-medium">Outcome</th>
-              <th class="text-right py-1.5 px-3 font-medium">Prob</th>
+              <th class="text-right py-1.5 px-3 font-medium">Probability</th>
               <th class="text-center py-1.5 px-3 font-medium">Flag</th>
-              <th class="text-right py-1.5 px-3 font-medium">NLI</th>
-              <th class="text-right py-1.5 px-3 font-medium">Dur</th>
-              <th class="text-right py-1.5 px-3 font-medium">Comp</th>
+              <th class="text-right py-1.5 px-3 font-medium">Contradiction</th>
+              <th class="text-right py-1.5 px-3 font-medium">Duration</th>
+              <th class="text-right py-1.5 px-3 font-medium">Completeness</th>
               <th class="text-center py-1.5 px-3 font-medium">Split</th>
             </tr>
           </thead>
@@ -388,6 +387,50 @@
           return result;
         },
 
+
+        readableFeature(name) {
+          const map = {
+            'nli_max_contradiction': 'NLI: max contradiction',
+            'nli_num_contradictions': 'NLI: contradiction count',
+            'nli_answered_count_contradiction': 'NLI: answered count',
+            'nli_outcome_contradiction': 'NLI: outcome mismatch',
+            'nli_completeness_contradiction': 'NLI: completeness',
+            'nli_mean_entailment': 'NLI: consistency score',
+            'transcript_word_count': 'Transcript word count',
+            'user_word_count': 'Patient word count',
+            'agent_word_count': 'Agent word count',
+            'resp_not_in_transcript': 'Responses not in transcript',
+            'resp_words_per_answered': 'Words per answer',
+            'resp_duration_per_answered': 'Duration per answer',
+            'resp_empty_count': 'Empty responses',
+            'resp_binary_ratio': 'Yes/No answer ratio',
+            'outcome_pred_entropy': 'Outcome uncertainty',
+            'outcome_pred_confidence': 'Outcome confidence',
+            'outcome_actual_prob': 'Outcome probability',
+            'rule_whisper_mismatch': 'Rule: whisper mismatch',
+            'rule_any_fired': 'Rule: any triggered',
+            'rule_count_fired': 'Rule: count triggered',
+            'whisper_mismatch_count': 'Whisper mismatches',
+            'response_completeness': 'Response completeness',
+            'answered_count': 'Questions answered',
+            'call_duration': 'Call duration',
+            'turn_count': 'Conversation turns',
+            'flow_edit_distance': 'Flow: edit distance',
+            'derived_duration_per_turn': 'Duration per turn',
+            'derived_duration_per_completeness': 'Duration per completeness',
+            'derived_user_talk_ratio': 'Patient talk ratio',
+            'vn_word_count': 'Validation notes length',
+          };
+          return map[name] || name.replace(/_/g, ' ').replace(/^tfidf vn \d+$/, 'Text pattern #' + name.split('_').pop());
+        },
+
+        featureColor(name) {
+          if (name.startsWith('nli_')) return 'var(--primary)';
+          if (name.startsWith('resp_')) return 'var(--chart-4)';
+          if (name.startsWith('rule_')) return 'var(--destructive)';
+          if (name.startsWith('flow_') || name.startsWith('diff_')) return 'var(--chart-2)';
+          return 'var(--muted-foreground); opacity: 0.5';
+        },
 
         async init() {
           const [statsRes, callsRes, impRes, sweepRes] = await Promise.all([
