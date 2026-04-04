@@ -282,19 +282,26 @@ def get_stats():
     all_calls = s["all_calls"]
     flagged = [c for c in all_calls if c["predicted_ticket"]]
 
-    # Outcome breakdown
-    outcome_counts = {}
-    for c in all_calls:
-        o = c["outcome"]
-        if o not in outcome_counts:
-            outcome_counts[o] = {"total": 0, "flagged": 0, "actual": 0, "correct": 0}
-        outcome_counts[o]["total"] += 1
-        if c["predicted_ticket"]:
-            outcome_counts[o]["flagged"] += 1
-        if c.get("actual_ticket"):
-            outcome_counts[o]["actual"] += 1
+    # Outcome breakdown — per split
+    def _outcome_counts(calls):
+        counts = {}
+        for c in calls:
+            o = c["outcome"]
+            if o not in counts:
+                counts[o] = {"total": 0, "flagged": 0, "actual": 0, "correct": 0}
+            counts[o]["total"] += 1
             if c["predicted_ticket"]:
-                outcome_counts[o]["correct"] += 1
+                counts[o]["flagged"] += 1
+            if c.get("actual_ticket"):
+                counts[o]["actual"] += 1
+                if c["predicted_ticket"]:
+                    counts[o]["correct"] += 1
+        return counts
+
+    outcome_counts = _outcome_counts(all_calls)
+    outcome_val = _outcome_counts(s["splits"]["val"])
+    outcome_trainval = _outcome_counts(s["splits"]["train"] + s["splits"]["val"])
+    outcome_test = _outcome_counts(s["splits"]["test"])
 
     config = s["config"]
     is_stratified = s["is_stratified"]
@@ -332,6 +339,9 @@ def get_stats():
         "has_stacking": False,
         "nli_summary": None,
         "outcome_breakdown": outcome_counts,
+        "outcome_val": outcome_val,
+        "outcome_trainval": outcome_trainval,
+        "outcome_test": outcome_test,
         "splits": {
             "train": len(s["splits"]["train"]),
             "val": len(s["splits"]["val"]),
