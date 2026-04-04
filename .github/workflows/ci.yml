@@ -32,11 +32,11 @@ jobs:
       - run: uv python install
       - run: uv sync
 
+      - name: Run NLI extraction (must run before pipeline)
+        run: uv run nli-extract
+
       - name: Run pipeline (extract → train → predict)
         run: uv run pipeline
-
-      - name: Run NLI extraction
-        run: uv run nli-extract
 
       - name: Run stacking meta-learner
         run: uv run stack
