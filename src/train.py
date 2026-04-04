@@ -72,25 +72,38 @@ def analyze_errors(y_true, y_proba, threshold, X, call_ids):
             log.info(f"  {cid[:12]}... proba={prob:.3f}")
 
 
-def grid_search_cv(X_train, y_train, scale_pos_weight):
-    """Grid search over XGBoost + LightGBM hyperparameters using CV."""
+def grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=None):
+    """Grid search over XGBoost + LightGBM hyperparameters using CV.
+
+    If cache_key is provided, checks for cached params in MODEL_DIR/param_cache.json.
+    """
+    # Check cache
+    cache_path = MODEL_DIR / "param_cache.json"
+    if cache_key and cache_path.exists():
+        with open(cache_path) as f:
+            cache = json.load(f)
+        if cache_key in cache:
+            cached = cache[cache_key]
+            log.info(f"\n--- Using cached params for '{cache_key}' ---")
+            log.info(f"  XGB: {cached['xgb']} | LGB: {cached['lgb']}")
+            return cached["xgb"], cached["lgb"]
+
     log.info("\n--- Grid Search (CV on train) ---")
 
     param_grid = {
         "max_depth": [3, 4, 5],
         "learning_rate": [0.05, 0.1],
-        "n_estimators": [100, 200, 300],
+        "n_estimators": [100, 200],
     }
 
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    best_score, best_params, best_model_type = 0, {}, "xgb"
+    best_score, best_params = 0, {}
 
     for depth, lr, n_est in product(
         param_grid["max_depth"],
         param_grid["learning_rate"],
         param_grid["n_estimators"],
     ):
-        # XGBoost
         cv_scores = []
         for tr_idx, te_idx in skf.split(X_train, y_train):
             model = XGBClassifier(
@@ -108,13 +121,11 @@ def grid_search_cv(X_train, y_train, scale_pos_weight):
         if mean_f1 > best_score:
             best_score = mean_f1
             best_params = {"max_depth": depth, "learning_rate": lr, "n_estimators": n_est}
-            best_model_type = "xgb"
 
     log.info(f"Best XGB params: {best_params} → CV F1={best_score:.4f}")
 
-    # LightGBM search
     lgb_best_score, lgb_best_params = 0, {}
-    for depth, lr, n_est in product([3, 4, 5], [0.05, 0.1], [100, 200, 300]):
+    for depth, lr, n_est in product([3, 4, 5], [0.05, 0.1], [100, 200]):
         cv_scores = []
         for tr_idx, te_idx in skf.split(X_train, y_train):
             model = LGBMClassifier(
@@ -134,6 +145,17 @@ def grid_search_cv(X_train, y_train, scale_pos_weight):
             lgb_best_params = {"max_depth": depth, "learning_rate": lr, "n_estimators": n_est}
 
     log.info(f"Best LGB params: {lgb_best_params} → CV F1={lgb_best_score:.4f}")
+
+    # Save to cache
+    if cache_key:
+        cache = {}
+        if cache_path.exists():
+            with open(cache_path) as f:
+                cache = json.load(f)
+        cache[cache_key] = {"xgb": best_params, "lgb": lgb_best_params}
+        with open(cache_path, "w") as f:
+            json.dump(cache, f, indent=2)
+        log.info(f"  Params cached as '{cache_key}'")
 
     return best_params, lgb_best_params
 
@@ -161,7 +183,7 @@ def train_and_evaluate():
     log.info(f"Val: {X_val.shape[0]} rows, {y_val.sum()} positive ({y_val.mean():.1%})")
 
     # --- Grid Search ---
-    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight)
+    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight, cache_key="single")
 
     # --- Train final models with best params ---
     log.info("\n--- Training Final XGBoost ---")
@@ -267,13 +289,13 @@ def train_and_evaluate():
     return best_name, best_thresh, common_cols
 
 
-def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight):
+def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight, cache_key=None):
     """Train and evaluate a single group (completed or non-completed)."""
     log.info(f"\n{'='*60}")
     log.info(f"  {group_name}: {len(X_train)} train ({y_train.sum()} tickets), {len(X_val)} val ({y_val.sum()} tickets)")
     log.info(f"{'='*60}")
 
-    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight)
+    xgb_params, lgb_params = grid_search_cv(X_train, y_train, scale_pos_weight, cache_key=cache_key)
 
     xgb = XGBClassifier(
         **xgb_params, scale_pos_weight=scale_pos_weight, subsample=0.8,
@@ -322,7 +344,7 @@ def _train_group(X_train, y_train, X_val, y_val, group_name, scale_pos_weight):
 
 
 def train_stratified():
-    """Train outcome-stratified models: separate for completed vs non-completed."""
+    """Hybrid: completed-specialist model + full-data model for non-completed."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -337,73 +359,96 @@ def train_stratified():
     X_train = X_train[common_cols]
     X_val = X_val[common_cols]
 
+    neg, pos = (y_train == 0).sum(), (y_train == 1).sum()
+    spw = neg / max(pos, 1)
+
     log.info(f"Features: {len(common_cols)}")
     log.info(f"Train: {len(X_train)} ({y_train.sum()} tickets)")
     log.info(f"Val: {len(X_val)} ({y_val.sum()} tickets)")
 
-    # --- Split by outcome ---
-    comp_train = train_df["outcome"] == "completed"
-    comp_val = val_df["outcome"] == "completed"
+    comp_train = (train_df["outcome"] == "completed").values
+    comp_val = (val_df["outcome"] == "completed").values
 
-    groups = {
-        "completed": (comp_train.values, comp_val.values),
-        "non_completed": (~comp_train.values, ~comp_val.values),
-    }
+    # --- COMPLETED: train on completed-only data ---
+    comp_result = _train_group(
+        X_train[comp_train], y_train[comp_train],
+        X_val[comp_val], y_val[comp_val],
+        "completed",
+        (y_train[comp_train] == 0).sum() / max((y_train[comp_train] == 1).sum(), 1),
+        cache_key="completed",
+    )
 
-    models = {}
-    combined_pred = np.zeros(len(y_val), dtype=int)
-    combined_proba = np.zeros(len(y_val))
+    # --- NON-COMPLETED: train on ALL data (more training signal) ---
+    nc_result = _train_group(
+        X_train, y_train,
+        X_val[~comp_val], y_val[~comp_val],
+        "non_completed (full-data)",
+        spw,
+        cache_key="full_data",
+    )
 
-    for group_name, (train_mask, val_mask) in groups.items():
-        Xtr = X_train[train_mask]
-        ytr = y_train[train_mask]
-        Xv = X_val[val_mask]
-        yv = y_val[val_mask]
+    # --- Tune non-completed threshold for precision ---
+    log.info(f"\n{'='*60}")
+    log.info("  TUNING NON-COMPLETED THRESHOLD")
+    log.info(f"{'='*60}")
 
-        neg, pos = (ytr == 0).sum(), (ytr == 1).sum()
-        spw = neg / max(pos, 1)
+    comp_idx = np.where(comp_val)[0]
+    noncomp_idx = np.where(~comp_val)[0]
+    comp_pred = (comp_result["proba"] >= comp_result["threshold"]).astype(int)
 
-        result = _train_group(Xtr, ytr, Xv, yv, group_name, spw)
-        models[group_name] = result
+    best_f1, best_nc_thresh = 0, 0.5
+    for t in np.arange(0.30, 0.95, 0.01):
+        nc_pred = (nc_result["proba"] >= t).astype(int)
+        combined = np.zeros(len(y_val), dtype=int)
+        combined[comp_idx] = comp_pred
+        combined[noncomp_idx] = nc_pred
+        p = precision_score(y_val, combined, zero_division=0)
+        f = f1_score(y_val, combined, zero_division=0)
+        # Optimize F1 with precision floor >= 50%
+        if p >= 0.50 and f > best_f1:
+            best_f1 = f
+            best_nc_thresh = round(float(t), 2)
 
-        # Fill combined predictions
-        val_idx = np.where(val_mask)[0]
-        pred = (result["proba"] >= result["threshold"]).astype(int)
-        combined_pred[val_idx] = pred
-        combined_proba[val_idx] = result["proba"]
+    nc_result["threshold"] = best_nc_thresh
+    log.info(f"  Best NC threshold: {best_nc_thresh} (F1={best_f1:.4f} with P>=50%)")
 
     # --- Combined evaluation ---
-    log.info(f"\n{'='*60}")
-    log.info("  COMBINED RESULTS")
-    log.info(f"{'='*60}")
+    nc_pred_final = (nc_result["proba"] >= best_nc_thresh).astype(int)
+    combined_pred = np.zeros(len(y_val), dtype=int)
+    combined_pred[comp_idx] = comp_pred
+    combined_pred[noncomp_idx] = nc_pred_final
+    combined_proba = np.zeros(len(y_val))
+    combined_proba[comp_idx] = comp_result["proba"]
+    combined_proba[noncomp_idx] = nc_result["proba"]
 
     f1 = f1_score(y_val, combined_pred, zero_division=0)
     prec = precision_score(y_val, combined_pred, zero_division=0)
     rec = recall_score(y_val, combined_pred, zero_division=0)
     caught = (combined_pred & y_val).sum()
-    flagged = combined_pred.sum()
     wrong = (combined_pred & (y_val == 0)).sum()
 
+    log.info(f"\n{'='*60}")
+    log.info("  COMBINED RESULTS")
+    log.info(f"{'='*60}")
     log.info(f"  F1={f1:.4f}  Precision={prec:.4f}  Recall={rec:.4f}")
-    log.info(f"  Caught: {caught}/{y_val.sum()}  Flagged: {flagged}  Wrong: {wrong}")
+    log.info(f"  Caught: {caught}/{y_val.sum()}  Flagged: {combined_pred.sum()}  Wrong: {wrong}")
     log.info(f"\n{classification_report(y_val, combined_pred, target_names=['no_ticket', 'ticket'], zero_division=0)}")
 
-    # Per-group breakdown
-    for group_name, (_, val_mask) in groups.items():
-        yv = y_val[val_mask]
-        pv = combined_pred[val_mask]
-        g_caught = (pv & yv).sum()
-        g_flagged = pv.sum()
-        g_wrong = (pv & (yv == 0)).sum()
-        log.info(f"  {group_name:15s}: caught {g_caught}/{yv.sum()} flagged {g_flagged} wrong {g_wrong}")
+    # Per-group
+    cc = (comp_pred & y_val[comp_val]).sum()
+    cw = (comp_pred & (y_val[comp_val] == 0)).sum()
+    nc = (nc_pred_final & y_val[~comp_val]).sum()
+    nw = (nc_pred_final & (y_val[~comp_val] == 0)).sum()
+    log.info(f"  completed      : caught {cc}/{y_val[comp_val].sum()} wrong {cw}")
+    log.info(f"  non_completed  : caught {nc}/{y_val[~comp_val].sum()} wrong {nw}")
 
     # --- Error analysis ---
     analyze_errors(y_val, combined_proba, 0.5, X_val, val_df["call_id"])
 
     # --- Save ---
     model_to_save = {
-        "completed": models["completed"]["model"],
-        "non_completed": models["non_completed"]["model"],
+        "completed": comp_result["model"],
+        "non_completed": nc_result["model"],
     }
     with open(MODEL_DIR / "model.pkl", "wb") as f:
         pickle.dump(model_to_save, f)
@@ -413,18 +458,18 @@ def train_stratified():
             "stratified": True,
             "columns": common_cols,
             "completed": {
-                "best_model": models["completed"]["model_type"],
-                "threshold": models["completed"]["threshold"],
-                "f1": round(models["completed"]["f1"], 4),
-                "xgb_params": models["completed"]["xgb_params"],
-                "lgb_params": models["completed"]["lgb_params"],
+                "best_model": comp_result["model_type"],
+                "threshold": comp_result["threshold"],
+                "f1": round(comp_result["f1"], 4),
+                "xgb_params": comp_result["xgb_params"],
+                "lgb_params": comp_result["lgb_params"],
             },
             "non_completed": {
-                "best_model": models["non_completed"]["model_type"],
-                "threshold": models["non_completed"]["threshold"],
-                "f1": round(models["non_completed"]["f1"], 4),
-                "xgb_params": models["non_completed"]["xgb_params"],
-                "lgb_params": models["non_completed"]["lgb_params"],
+                "best_model": nc_result["model_type"],
+                "threshold": best_nc_thresh,
+                "f1": round(best_f1, 4),
+                "xgb_params": nc_result["xgb_params"],
+                "lgb_params": nc_result["lgb_params"],
             },
             "val_metrics": {
                 "f1": round(f1, 4),
@@ -433,7 +478,7 @@ def train_stratified():
             },
         }, f, indent=2)
 
-    log.info(f"\nStratified models saved to {MODEL_DIR}")
+    log.info(f"\nHybrid models saved to {MODEL_DIR}")
     return f1
 
 

@@ -111,6 +111,36 @@ def compute_contributions(feat_row, importance):
     return sorted(pos + neg, key=lambda c: c["value"], reverse=True)
 
 
+def _get_proba(model, X, model_type):
+    """Get probabilities from a model, handling ensemble case."""
+    if model_type == "ensemble":
+        return 0.5 * model["xgb"].predict_proba(X)[:, 1] + 0.5 * model["lgb"].predict_proba(X)[:, 1]
+    return model.predict_proba(X)[:, 1]
+
+
+def _predict_split(model, config, X, df):
+    """Predict a split, routing by outcome if stratified."""
+    is_stratified = config.get("stratified", False)
+    proba = np.zeros(len(df))
+    pred = np.zeros(len(df), dtype=bool)
+
+    if is_stratified:
+        comp_mask = (df["outcome"] == "completed").values
+        for group, mask in [("completed", comp_mask), ("non_completed", ~comp_mask)]:
+            idx = np.where(mask)[0]
+            if len(idx) == 0:
+                continue
+            gc = config[group]
+            p = _get_proba(model[group], X.iloc[idx], gc["best_model"])
+            proba[idx] = p
+            pred[idx] = p >= gc["threshold"]
+    else:
+        proba = _get_proba(model, X, config["best_model"])
+        pred = proba >= config["threshold"]
+
+    return proba, pred
+
+
 def _load_state():
     """Load models, data, and precompute predictions."""
     if _state:
@@ -123,7 +153,7 @@ def _load_state():
         config = json.load(f)
 
     columns = config["columns"]
-    threshold = config["threshold"]
+    is_stratified = config.get("stratified", False)
 
     # Load data
     train, val, test = load_all()
@@ -136,8 +166,7 @@ def _load_state():
     # Compute predictions for all splits
     splits = {}
     for name, df, X in [("train", train, X_train), ("val", val, X_val), ("test", test, X_test)]:
-        proba = model.predict_proba(X)[:, 1]
-        pred = proba >= threshold
+        proba, pred = _predict_split(model, config, X, df)
 
         records = []
         for idx, (_, row) in enumerate(df.iterrows()):
@@ -162,12 +191,20 @@ def _load_state():
 
     # Val metrics
     y_val = val[TARGET].astype(int).values
-    val_proba = model.predict_proba(X_val)[:, 1]
-    val_pred = (val_proba >= threshold).astype(int)
+    val_proba, _ = _predict_split(model, config, X_val, val)
+    val_pred = (val_proba >= (config["completed"]["threshold"] if is_stratified else config["threshold"])).astype(int)
+    # For stratified, recompute val_pred properly per-outcome
+    if is_stratified:
+        _, val_pred_bool = _predict_split(model, config, X_val, val)
+        val_pred = val_pred_bool.astype(int)
 
-    # Feature importance
-    if hasattr(model, "feature_importances_"):
-        importance = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
+    # Feature importance — for stratified, use completed model (larger group)
+    imp_model = model["completed"] if is_stratified else model
+    if is_stratified and isinstance(imp_model, dict):
+        # ensemble — use xgb importance
+        imp_model = imp_model.get("xgb", imp_model)
+    if hasattr(imp_model, "feature_importances_"):
+        importance = pd.Series(imp_model.feature_importances_, index=columns).sort_values(ascending=False)
     else:
         importance = pd.Series(dtype=float)
 
@@ -175,7 +212,7 @@ def _load_state():
         "model": model,
         "config": config,
         "columns": columns,
-        "threshold": threshold,
+        "is_stratified": is_stratified,
         "splits": splits,
         "all_calls": splits["train"] + splits["val"] + splits["test"],
         "train_df": train,
@@ -248,15 +285,36 @@ def get_stats():
         if c.get("actual_ticket"):
             outcome_counts[o]["actual"] += 1
 
-    model_name = s["config"]["best_model"].upper()
+    config = s["config"]
+    is_stratified = s["is_stratified"]
+
+    if is_stratified:
+        model_name = "STRATIFIED"
+        stratified_info = {
+            "completed": {
+                "model": config["completed"]["best_model"].upper(),
+                "threshold": config["completed"]["threshold"],
+                "f1": config["completed"].get("f1"),
+            },
+            "non_completed": {
+                "model": config["non_completed"]["best_model"].upper(),
+                "threshold": config["non_completed"]["threshold"],
+                "f1": config["non_completed"].get("f1"),
+            },
+        }
+    else:
+        model_name = config["best_model"].upper()
+        stratified_info = None
 
     return {
         "total_calls": len(all_calls),
         "flagged_calls": len(flagged),
         "flagged_pct": round(len(flagged) / len(all_calls) * 100, 1),
-        "threshold": s["threshold"],
+        "threshold": config.get("threshold"),
         "val_metrics": s["val_metrics"],
         "model": model_name,
+        "is_stratified": is_stratified,
+        "stratified": stratified_info,
         "feature_count": len(s["columns"]),
         "has_nli": False,
         "has_stacking": False,
@@ -301,8 +359,11 @@ def get_call_detail(call_id: str):
         feat_row = X.loc[idx]
 
         # Probability
-        proba = float(s["model"].predict_proba(X.loc[[idx]])[0, 1])
-        predicted = proba >= s["threshold"]
+        single_X = X.loc[[idx]]
+        single_df = pd.DataFrame([row])
+        proba_arr, pred_arr = _predict_split(s["model"], s["config"], single_X, single_df)
+        proba = float(proba_arr[0])
+        predicted = bool(pred_arr[0])
 
         # Parse transcript into turns
         transcript = str(row.get("transcript_text", ""))
@@ -422,11 +483,11 @@ def get_threshold_sweep():
     """Sweep thresholds and return metrics for interactive tuning."""
     s = _state
     y_val = s["val_df"][TARGET].astype(int).values
-    val_proba = s["model"].predict_proba(s["X_val"])[:, 1]
+    val_proba, _ = _predict_split(s["model"], s["config"], s["X_val"], s["val_df"])
     all_proba = np.concatenate([
-        s["model"].predict_proba(s["X_train"])[:, 1],
+        _predict_split(s["model"], s["config"], s["X_train"], s["train_df"])[0],
         val_proba,
-        s["model"].predict_proba(s["X_test"])[:, 1],
+        _predict_split(s["model"], s["config"], s["X_test"], s["test_df"])[0],
     ])
 
     sweep = []
@@ -474,7 +535,7 @@ def get_pipeline_info():
     return {
         "signals": signals,
         "total_features": len(config.get("columns", [])),
-        "model": config.get("best_model", "lgb").upper(),
+        "model": "STRATIFIED" if config.get("stratified") else config.get("best_model", "lgb").upper(),
     }
 
 

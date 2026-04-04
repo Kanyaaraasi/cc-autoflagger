@@ -9,7 +9,7 @@ import pandas as pd
 
 from .config import OUTPUT_DIR, MODEL_DIR, TARGET, PROJECT_ROOT
 from .data_loader import load_all
-from .app import compute_flag_explanation, compute_signal_health, compute_contributions
+from .app import compute_flag_explanation, compute_signal_health, compute_contributions, _get_proba, _predict_split
 from sklearn.metrics import f1_score, precision_score, recall_score
 
 
@@ -21,7 +21,7 @@ def build_api_data():
         config = json.load(f)
 
     columns = config["columns"]
-    threshold = config["threshold"]
+    is_stratified = config.get("stratified", False)
 
     train, val, test = load_all()
 
@@ -34,8 +34,7 @@ def build_api_data():
     call_details = {}
 
     for name, df, X in [("train", train, X_train), ("val", val, X_val), ("test", test, X_test)]:
-        proba = model.predict_proba(X)[:, 1]
-        pred = proba >= threshold
+        proba, pred = _predict_split(model, config, X, df)
 
         for idx, (_, row) in enumerate(df.iterrows()):
             call = {
@@ -126,20 +125,24 @@ def build_api_data():
 
     # Val metrics
     y_val = val[TARGET].astype(int).values
-    val_proba = model.predict_proba(X_val)[:, 1]
-    val_pred = (val_proba >= threshold).astype(int)
+    val_proba, val_pred_bool = _predict_split(model, config, X_val, val)
+    val_pred = val_pred_bool.astype(int)
 
-    # Feature importance (structured format matching new API)
+    # Feature importance — for stratified, use completed model (larger group)
+    imp_model = model["completed"] if is_stratified else model
+    if is_stratified and isinstance(imp_model, dict):
+        imp_model = imp_model.get("xgb", imp_model)
     features_list = []
-    if hasattr(model, "feature_importances_"):
-        imp = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
+    if hasattr(imp_model, "feature_importances_"):
+        imp = pd.Series(imp_model.feature_importances_, index=columns).sort_values(ascending=False)
         features_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
 
     importance_data = {"features": features_list, "meta_learner": None}
 
     # Threshold sweep
     all_proba = np.concatenate([
-        model.predict_proba(X_train)[:, 1], val_proba, model.predict_proba(X_test)[:, 1],
+        _predict_split(model, config, X_train, train)[0], val_proba,
+        _predict_split(model, config, X_test, test)[0],
     ])
     sweep = []
     for t in np.arange(0.05, 0.96, 0.05):
