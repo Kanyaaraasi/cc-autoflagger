@@ -220,6 +220,18 @@ def build_api_data():
     flagged = [c for c in all_calls if c["predicted_ticket"]]
     model_name = "Stacked NLI + LightGBM" if meta_config else config["best_model"].upper()
 
+    # NLI summary
+    nli_summary = None
+    if nli_splits:
+        all_nli = pd.concat([nli_splits.get(n, pd.DataFrame()) for n in ["train", "val", "test"]], ignore_index=True)
+        if "nli_max_contradiction" in all_nli.columns:
+            scores = all_nli["nli_max_contradiction"]
+            nli_summary = {
+                "Strong contradiction": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
+                "Mild contradiction": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
+                "No contradiction": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
+            }
+
     stats = {
         "total_calls": len(all_calls),
         "flagged_calls": len(flagged),
@@ -234,6 +246,7 @@ def build_api_data():
         "feature_count": len(columns),
         "has_nli": bool(nli_splits),
         "has_stacking": meta_config is not None,
+        "nli_summary": nli_summary,
         "outcome_breakdown": outcome_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
     }
