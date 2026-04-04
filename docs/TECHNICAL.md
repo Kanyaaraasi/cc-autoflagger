@@ -8,12 +8,14 @@ A developer-friendly walkthrough of every algorithm and technique used in this p
 
 1. [The Problem in Engineering Terms](#1-the-problem-in-engineering-terms)
 2. [Data Pipeline](#2-data-pipeline)
-3. [Feature Engineering — The 7 Signal Extractors](#3-feature-engineering--the-7-signal-extractors)
+3. [Feature Engineering — The 8 Signal Extractors](#3-feature-engineering--the-8-signal-extractors)
 4. [Machine Learning Models](#4-machine-learning-models)
 5. [Threshold Tuning](#5-threshold-tuning)
 6. [Evaluation Metrics Explained](#6-evaluation-metrics-explained)
 7. [Data Leakage Analysis](#7-data-leakage-analysis)
-8. [What We Tried and Why We Dropped It](#8-what-we-tried-and-why-we-dropped-it)
+8. [NLI Contradiction Detection](#8-nli-contradiction-detection)
+9. [Stacking Pipeline](#9-stacking-pipeline)
+10. [What We Tried and Why We Dropped It](#10-what-we-tried-and-why-we-dropped-it)
 
 ---
 
@@ -43,8 +45,8 @@ hackathon_test.csv  (159 rows × 53 columns, labels hidden)
    data_loader.py        → Loads CSVs, parses JSON fields
         │
         ▼
-   features.py           → Runs 7 signal extractors, produces feature matrix
-        │                   (689 × 135 numeric matrix)
+   features.py           → Runs 8 signal extractors, produces feature matrix
+        │                   (689 × 146 numeric matrix)
         ▼
    train.py              → Trains LightGBM, tunes threshold
         │
@@ -69,9 +71,9 @@ The 53 raw columns fall into groups:
 
 ---
 
-## 3. Feature Engineering — The 7 Signal Extractors
+## 3. Feature Engineering — The 8 Signal Extractors
 
-Each extractor takes the raw dataframe and outputs new numeric columns. All 7 are concatenated into a single feature matrix.
+Each extractor takes the raw dataframe and outputs new numeric columns. All 8 are concatenated into a single feature matrix.
 
 ### 3a. Structured Features (~30 features)
 **File:** `src/features.py → _structured_features()`
@@ -266,6 +268,55 @@ We use `sklearn.TfidfVectorizer` with:
 
 ---
 
+### 3h. Response Checker (5 features)
+**File:** `src/signals/response_checker.py`
+
+**What it does:** Verifies whether the answers recorded in `responses_json` actually appear in the transcript. This catches cases where the system recorded answers that the patient never actually said.
+
+**Features:**
+
+- `resp_not_in_transcript`: For each answered response, checks if the answer text appears as a substring in the transcript. Returns the fraction of answers not found. This is the strongest feature in this extractor: tickets average 0.163, non-tickets average 0.021. A high value means the system recorded answers that don't appear in the conversation.
+
+- `resp_empty_count`: Number of response fields that are empty or missing. Catches cases where the system skipped recording answers.
+
+- `resp_binary_ratio`: Fraction of responses that are simple yes/no answers. Unusual patterns (all yes/no for detailed medical questions) can indicate fabrication.
+
+- `resp_words_per_answered`: Average word count per answered response. Very short answers across the board can indicate the system was generating placeholder responses.
+
+- `resp_duration_per_answered`: Call duration divided by number of answered responses. A very short time per answer suggests the system rushed through questions or fabricated responses.
+
+---
+
+### 3i. NLI Checker (6 features)
+**File:** `src/signals/nli_checker.py`
+
+**What it does:** Uses `cross-encoder/nli-deberta-v3-base` (~370MB, zero-shot) to detect logical contradictions between `validation_notes` and structured fields.
+
+**How it works:**
+
+1. For each call, generate hypotheses from structured data:
+   - "The patient answered {answered_count} of 14 questions"
+   - "The call outcome was {outcome}"
+   - "Response completeness was {completeness}"
+
+2. Extract statements from validation_notes as premises.
+
+3. Run each (premise, hypothesis) pair through DeBERTa, which outputs probabilities for entailment, neutral, and contradiction.
+
+4. Aggregate into 6 features:
+   - `nli_max_contradiction`: Highest contradiction score across all pairs
+   - `nli_mean_entailment`: Average entailment score (low = suspicious)
+   - `nli_num_contradictions`: Count of pairs exceeding contradiction threshold
+   - `nli_outcome_contradiction`: Contradiction score for outcome hypothesis
+   - `nli_answered_count_contradiction`: Contradiction score for answered count hypothesis
+   - `nli_completeness_contradiction`: Contradiction score for completeness hypothesis
+
+**Why this matters:** NLI catches semantic contradictions that statistical features miss. For example, notes saying "all 14 questions asked and answered" when `answered_count=11` produces a contradiction score of 0.986.
+
+**Runtime:** ~44 seconds for 992 calls on MPS (Apple Silicon), ~2 minutes on CPU.
+
+---
+
 ## 4. Machine Learning Models
 
 ### What is LightGBM?
@@ -297,7 +348,7 @@ A single tree is too simple. **Gradient boosting** chains 200 trees, where each 
 
 ### Why not a neural network?
 
-With only 59 positive examples and 135 features, deep learning would overfit catastrophically. Tree ensembles are the gold standard for small-to-medium tabular data.
+With only 59 positive examples and 146 features, deep learning would overfit catastrophically. Tree ensembles are the gold standard for small-to-medium tabular data.
 
 ### Key Hyperparameters
 
@@ -339,7 +390,7 @@ Fold 5: Train on parts 1-4, test on part 5
 
 Each fold gives an F1 score. The average tells us how well the model generalizes. **Stratified** means each fold maintains the 9% positive ratio.
 
-Our CV result: **F1 = 0.944 ± 0.07** (mean ± standard deviation across 5 folds).
+Our base CV result: **F1 = 0.9599 +/- 0.036** (mean +/- standard deviation across 5 folds). After stacking: **F1 = 0.9739 +/- 0.021**.
 
 ### XGBoost vs LightGBM vs Ensemble
 
@@ -436,7 +487,74 @@ Our test suite (`test_pipeline.py`) explicitly checks:
 
 ---
 
-## 8. What We Tried and Why We Dropped It
+## 8. NLI Contradiction Detection
+
+NLI (Natural Language Inference) is the key innovation that pushed the leaderboard score from 0.9333 to 1.000.
+
+### What is NLI?
+
+NLI models classify pairs of sentences as "entailment" (A implies B), "contradiction" (A contradicts B), or "neutral":
+```
+Premise:    "All 14 questions were asked and answered"
+Hypothesis: "The patient answered 11 of 14 questions"
+Result:     CONTRADICTION (score: 0.986)
+```
+
+We use `cross-encoder/nli-deberta-v3-base` (~370MB), a cross-encoder that processes both sentences jointly. Unlike bart-large-mnli (initially considered but rejected for being too slow at 45-60 min), DeBERTa processes 992 calls in ~44 seconds on MPS.
+
+### Why it works
+
+The calls the base ML model missed had validation notes that *looked* normal statistically but contained logical contradictions invisible to TF-IDF or keyword matching. NLI models are purpose-built for exactly this kind of reasoning.
+
+### Hypothesis generation
+
+For each call, we generate structured hypotheses from the data:
+- Answered count: "The patient answered {n} of 14 questions"
+- Outcome: "The call outcome was {outcome}"
+- Completeness: "Response completeness was {pct}%"
+
+Special handling: skip answered_count hypotheses for escalated calls (they have default metric values that trigger false positives).
+
+---
+
+## 9. Stacking Pipeline
+
+### Architecture
+
+```
+Level 0a: LightGBM (146 features + 6 NLI features)
+          → ml_proba
+
+Level 0b: Raw NLI scores (6 features)
+
+Level 1:  LogReg meta-learner on 15 features:
+          ml_proba + 6 NLI scores + 8 context features
+```
+
+### The 8 context features
+
+The meta-learner uses 8 additional context features that help it interpret NLI scores:
+
+| Feature | Why it helps |
+|---------|-------------|
+| `resp_not_in_transcript` | High value + high NLI contradiction = likely real ticket |
+| `resp_empty_count` | Missing responses corroborate NLI findings |
+| `resp_binary_ratio` | Unusual answer patterns add context |
+| `response_completeness` | Helps disambiguate escalated-call noise |
+| `answered_count` | Directly relevant to NLI answered-count hypothesis |
+| `whisper_mismatch_count` | STT errors corroborate transcription issues |
+| `rule_any_fired` | Heuristic agreement strengthens NLI signal |
+| `outcome_pred_confidence` | Low confidence + NLI contradiction = suspicious |
+
+This wider feature set lets the meta-learner contextualize NLI contradictions. For example, "high NLI contradiction but answers verified in transcript (`resp_not_in_transcript` = 0)" likely means the contradiction is noise, not a real ticket.
+
+### Threshold selection
+
+The blended threshold (0.69) is auto-selected: 40% weight on validation-optimal threshold + 60% weight on CV-optimal threshold. This reduces overfitting to the small validation set (11 positives). The `--threshold` flag on `uv run stack` allows manual override.
+
+---
+
+## 10. What We Tried and Why We Dropped It
 
 ### LLM-as-Judge (Groq API, GPT-OSS-20B)
 
@@ -448,23 +566,8 @@ Our test suite (`test_pipeline.py`) explicitly checks:
 
 **Why dropped:** Marginal value (validation_notes already captures similar analysis), API rate limits on the free tier, and the base model was already at F1=0.92 without it.
 
-### NLI Contradiction Checker (facebook/bart-large-mnli)
-
-**Idea:** Use a Natural Language Inference model to detect contradictions between the transcript and the structured responses.
-
-NLI models classify pairs of sentences as "entailment" (A implies B), "contradiction" (A contradicts B), or "neutral":
-```
-Premise:    "My weight is 262 pounds"
-Hypothesis: "The patient weighs 62 pounds"
-Result:     CONTRADICTION (score: 0.85)
-```
-
-**Implementation:** Built the full pipeline. For each Q&A pair, convert the answer to a hypothesis, find the relevant transcript segment, run NLI classification.
-
-**Why dropped:** ~45-60 min runtime on CPU (1.5GB model, 14 comparisons per call × 992 calls). The number_checker already catches numeric mismatches faster. The heuristic rules catch non-numeric contradictions.
-
 ### Feature: patient_state one-hot encoding
 
 **What it was:** 50 binary columns, one per US state.
 
-**Why dropped:** With 689 training samples, most states have <15 examples. The model can't learn meaningful patterns from "3 calls from Wyoming had 1 ticket." It just memorizes noise. Removing it improved CV F1 from 0.83 to 0.94 — the single biggest improvement.
+**Why dropped:** With 689 training samples, most states have <15 examples. The model can't learn meaningful patterns from "3 calls from Wyoming had 1 ticket." It just memorizes noise. Removing it improved CV F1 significantly.

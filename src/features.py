@@ -3,9 +3,9 @@
 import pandas as pd
 import numpy as np
 
-from .config import DROP_COLS, CATEGORICAL_COLS
+from .config import DROP_COLS, CATEGORICAL_COLS, OUTPUT_DIR
 from .logger import get_logger
-from .signals import heuristics, transcript_diff, number_checker, flow_checker
+from .signals import heuristics, transcript_diff, number_checker, flow_checker, response_checker
 from .signals.text_features import TextFeatureExtractor
 from .signals.outcome_predictor import OutcomePredictor
 
@@ -55,10 +55,23 @@ class FeaturePipeline:
         log.info(f"{prefix}Extracting outcome predictor signals...")
         outcome = self.outcome_predictor.transform(df)
 
-        all_features = pd.concat(
-            [structured, heur, diff, nums, flow, text, outcome],
-            axis=1,
-        )
+        log.info(f"{prefix}Extracting response checker signals...")
+        resp = response_checker.extract(df)
+
+        parts = [structured, heur, diff, nums, flow, text, outcome, resp]
+
+        # Load pre-computed NLI features if available
+        if split_name:
+            nli_path = OUTPUT_DIR / f"nli_{split_name}.parquet"
+            if nli_path.exists():
+                nli = pd.read_parquet(nli_path)
+                nli.index = df.index
+                parts.append(nli)
+                log.info(f"{prefix}Loaded {nli.shape[1]} NLI features from disk")
+            else:
+                log.info(f"{prefix}No NLI features found (run 'uv run nli-extract' first)")
+
+        all_features = pd.concat(parts, axis=1)
 
         log.info(f"{prefix}Total features: {all_features.shape[1]}")
         return all_features

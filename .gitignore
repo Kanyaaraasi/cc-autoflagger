@@ -17,3 +17,6 @@ models/
 outputs/
 
 .pytest_cache
+.playwright-mcp
+.claude
+.DS_Store

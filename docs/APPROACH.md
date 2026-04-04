@@ -17,7 +17,7 @@ Raw Data (53 columns per call)
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│           7 Signal Extractors                │
+│           8 Signal Extractors                │
 │                                              │
 │  1. Structured features (numeric + one-hot)  │
 │  2. Heuristic rules (10 domain rules)        │
@@ -26,19 +26,28 @@ Raw Data (53 columns per call)
 │  5. Flow checker (edit distance)             │
 │  6. Text features (TF-IDF + keywords)        │
 │  7. Outcome predictor (disagreement)         │
+│  8. Response checker (answer verification)   │
 └──────────────┬───────────────────────────────┘
-               │ ~135 features
+               │ 146 features
                ▼
 ┌──────────────────────────────────────────────┐
 │    Grid Search: XGBoost + LightGBM           │
 │    5-fold Stratified CV on train             │
 │    Pick best model by CV F1                  │
 └──────────────┬───────────────────────────────┘
-               │
+               │ ml_proba
                ▼
 ┌──────────────────────────────────────────────┐
-│    Threshold Tuning (sweep 0.05–0.95)        │
-│    Optimize for F1 on validation set         │
+│    NLI Contradiction Detection (DeBERTa)     │
+│    6 scores per call (zero-shot)             │
+└──────────────┬───────────────────────────────┘
+               │ 6 NLI scores
+               ▼
+┌──────────────────────────────────────────────┐
+│    Stacking Meta-learner (LogReg)            │
+│    15 features: ml_proba + 6 NLI scores      │
+│    + 8 context features                      │
+│    Blended threshold: 0.69                   │
 └──────────────┬───────────────────────────────┘
                │
                ▼
@@ -77,6 +86,33 @@ TF-IDF (15 features) on `validation_notes` plus 13 binary keyword flags for issu
 ### 7. Outcome Predictor (4 features)
 Trains a separate LogisticRegression to predict call outcome from transcript alone. Features: disagreement flag, prediction entropy, confidence, probability of actual outcome.
 
+### 8. Response Checker (5 features)
+Verifies whether the answers recorded in `responses_json` actually appear in the transcript text.
+
+- `resp_not_in_transcript`: Fraction of answered responses whose value does not appear anywhere in the transcript. Tickets average 0.163 vs non-tickets 0.021 — the strongest single feature in this extractor.
+- `resp_empty_count`: Number of responses with empty/missing answers.
+- `resp_binary_ratio`: Fraction of responses that are simple yes/no answers.
+- `resp_words_per_answered`: Average word count per answered response.
+- `resp_duration_per_answered`: Call duration divided by number of answered responses.
+
+## NLI Contradiction Detection
+
+Uses `cross-encoder/nli-deberta-v3-base` (~370MB) to detect contradictions between `validation_notes` and structured fields. For each call, the checker generates hypotheses from structured data (e.g., "The patient answered 11 of 14 questions") and compares them against statements in the validation notes. Produces 6 features: max contradiction score, mean entailment, number of contradictions above threshold, and per-hypothesis contradiction scores for outcome, answered count, and completeness.
+
+## Stacking Meta-learner
+
+A LogisticRegression meta-learner combines ML predictions with NLI signals using 15 features:
+
+| Feature Group | Count | Examples |
+|---------------|-------|---------|
+| ML probability | 1 | `ml_proba` |
+| NLI scores | 6 | `nli_max_contradiction`, `nli_mean_entailment`, etc. |
+| Context features | 8 | `resp_not_in_transcript`, `resp_empty_count`, `resp_binary_ratio`, `response_completeness`, `answered_count`, `whisper_mismatch_count`, `rule_any_fired`, `outcome_pred_confidence` |
+
+The wider feature set lets the meta-learner contextualize NLI contradictions. For example, a high NLI contradiction score combined with `resp_not_in_transcript = 0` (answers verified in transcript) likely means the contradiction is noise, not a real ticket.
+
+Threshold selection uses a blended approach: 40% validation-optimal + 60% CV-optimal = 0.69.
+
 ## Model Selection
 
 Grid search over 18 hyperparameter combinations for both XGBoost and LightGBM:
@@ -95,19 +131,20 @@ Best model selected by validation F1, with ensemble (avg probabilities) as a thi
 | Val F1 | 1.000 |
 | Val Precision | 1.000 |
 | Val Recall | 1.000 |
-| 5-Fold CV F1 | 0.944 ± 0.07 |
+| Base CV F1 | 0.9599 +/- 0.036 |
+| Stacked CV F1 | 0.9739 +/- 0.021 |
 | Best Model | LightGBM (depth=3, lr=0.1, 200 trees) |
-| Test Predictions | 17/159 flagged (10.7%) |
+| Test Predictions | 18/159 flagged (11.3%) |
+| Private Leaderboard F1 | **1.000** |
+| Public Leaderboard F1 | **1.000** |
 
 ## Key Decisions
 
 ### Feature Selection
-Dropped `patient_state` one-hot encoding (50 sparse features) — US state codes are noise for ticket prediction. Reduced TF-IDF from 50 to 15 features. This cut features from 165 → 135 and improved CV F1 from 0.83 to 0.94.
+Dropped `patient_state` one-hot encoding (50 sparse features) — US state codes are noise for ticket prediction. Reduced TF-IDF from 50 to 15 features. This cut features from 165 → 146 (after adding Response Checker) and improved CV F1 significantly.
 
 ### What We Tried and Dropped
 - **LLM-as-judge (Groq API)**: Built and tested. Over-flagged (5/5 test calls marked as issues). Rate limited on gpt-oss-120b. Marginal value given validation_notes already captures similar analysis.
-- **NLI contradiction checker (bart-large-mnli)**: Built but not run. 45-60 min runtime on CPU. Catches same signals as number_checker and heuristics.
-- Both were removed to keep the pipeline fast (~2 seconds) and dependency-light.
 
 ## Suspicions & Caveats
 

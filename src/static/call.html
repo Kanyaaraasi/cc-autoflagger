@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml">
   <title>Call Detail — CareCaller</title>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style type="text/tailwindcss">
     @theme {
       --font-sans: 'Figtree', sans-serif;
@@ -46,6 +47,8 @@
       --input: oklch(1 0 0 / 15%);
     }
     body { background: var(--background); color: var(--foreground); }
+    .panel { background: var(--card); border: 1px solid var(--border); }
+    .mono { font-family: 'JetBrains Mono', monospace; }
     .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
     .badge { border-radius: calc(var(--radius) * 0.6); padding: 2px 8px; font-size: 0.75rem; font-weight: 500; }
     .bar-animate { transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -65,28 +68,34 @@
 </head>
 <body class="min-h-screen font-sans" x-data="callDetail()" x-init="init()">
 
-  <!-- Header -->
-  <header style="border-bottom: 1px solid var(--border)" class="px-3 md:px-6 py-3 md:py-4">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <a href="/" style="color: var(--muted-foreground)" class="hover:opacity-80 transition">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
-          </svg>
-        </a>
-        <div class="w-8 h-8 rounded-xl flex items-center justify-center" style="background: oklch(0.525 0.223 3.958 / 15%)">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4" style="color: var(--primary)">
-            <path d="M16.5 3C19.538 3 22 5.5 22 9c0 7-7.5 11-10 12.5C9.5 20 2 16 2 9c0-3.5 2.462-6 5.5-6C9.36 3 11.048 3.695 12 4.628 12.952 3.695 14.64 3 16.5 3Zm-3.043 9.408L12 14.4l-1.457-1.992-1.2-1.637L8.2 12.3l-1.2 1.637H3.522A14.455 14.455 0 0 0 6 18.118L12 21.5l6-3.382c1.072-.768 1.835-1.476 2.478-2.218h-3.478l-1.2-1.637-1.2 1.637-1.457-1.992-.686-.937-.686.937L12 16l-1.457-1.992-1.086-1.483 1.086-1.483L12 9.05l1.457 1.992 1.086 1.483-1.086 1.483Z"/>
-          </svg>
-        </div>
-        <h1 class="text-lg font-semibold">Call Detail</h1>
-        <span class="text-sm font-mono" style="color: var(--muted-foreground)" x-text="call?.call_id?.slice(0, 12) + '...'"></span>
-      </div>
-      <button @click="toggleTheme()" class="p-2 rounded-lg cursor-pointer transition-colors hover:opacity-80" style="background: var(--secondary); color: var(--muted-foreground)" title="Toggle theme">
-        <svg x-show="isDark" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+  <!-- STATUS BAR -->
+  <header class="panel border-t-0 border-x-0 px-3 md:px-4 py-2 flex items-center justify-between text-xs overflow-x-auto" style="color: var(--muted-foreground)">
+    <div class="flex items-center gap-2 mono shrink-0">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 shrink-0" style="color: var(--primary)">
+        <path d="M16.5 3C19.538 3 22 5.5 22 9c0 7-7.5 11-10 12.5C9.5 20 2 16 2 9c0-3.5 2.462-6 5.5-6C9.36 3 11.048 3.695 12 4.628 12.952 3.695 14.64 3 16.5 3Zm-3.043 9.408L12 14.4l-1.457-1.992-1.2-1.637L8.2 12.3l-1.2 1.637H3.522A14.455 14.455 0 0 0 6 18.118L12 21.5l6-3.382c1.072-.768 1.835-1.476 2.478-2.218h-3.478l-1.2-1.637-1.2 1.637-1.457-1.992-.686-.937-.686.937L12 16l-1.457-1.992-1.086-1.483 1.086-1.483L12 9.05l1.457 1.992 1.086 1.483-1.086 1.483Z"/>
+      </svg>
+      <a href="/" class="font-bold hover:opacity-80" style="color: var(--foreground)">CARECALLER</a>
+      <span style="color: var(--border)">│</span>
+      <a href="/" class="hover:opacity-80" style="color: var(--muted-foreground)">Overview</a>
+      <a href="/dashboard" class="hover:opacity-80" style="color: var(--muted-foreground)">Dashboard</a>
+      <span class="hover:opacity-80 font-semibold" style="color: var(--foreground)">Call Detail</span>
+      <span style="color: var(--muted-foreground)" x-text="call?.call_id?.slice(0, 12) + '...'"></span>
+      <span class="hidden md:inline" style="color: var(--border)">│</span>
+      <span class="hidden md:inline">Stacked NLI + LightGBM</span>
+      <span class="hidden lg:inline" style="color: var(--border)">│</span>
+      <span class="hidden lg:inline">146 features</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="w-1.5 h-1.5 rounded-full inline-block" style="background: var(--chart-1); animation: pulse 2s infinite"></span>
+      <a href="https://github.com/Kanyaaraasi/cc-autoflagger" target="_blank" class="hover:opacity-70 transition p-1" title="GitHub Repo" style="color: var(--muted-foreground)">
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+      </a>
+      <span style="color: var(--border)">│</span>
+      <button @click="toggleTheme()" class="cursor-pointer hover:opacity-70 transition p-1" title="Toggle theme">
+        <svg x-show="isDark" xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
         </svg>
-        <svg x-show="!isDark" xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg x-show="!isDark" xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
         </svg>
       </button>
@@ -95,84 +104,143 @@
 
   <main class="max-w-7xl mx-auto px-3 md:px-6 py-4 md:py-8 space-y-4 md:space-y-6" x-show="call" x-transition>
 
-    <!-- Call Header -->
-    <div class="card p-4 md:p-6 fade-in">
-      <div class="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
-        <!-- Probability Gauge -->
-        <div class="flex md:block items-center gap-4 md:text-center">
-          <div class="relative w-16 h-16 md:w-24 md:h-24 shrink-0">
-            <svg class="w-16 h-16 md:w-24 md:h-24 -rotate-90" viewBox="0 0 100 100">
-              <circle cx="50" cy="50" r="42" fill="none" stroke="var(--secondary)" stroke-width="8"/>
-              <circle cx="50" cy="50" r="42" fill="none"
-                :stroke="call.predicted_ticket ? 'var(--destructive)' : 'var(--chart-1)'"
-                stroke-width="8" stroke-linecap="round"
-                :stroke-dasharray="(call.probability * 264) + ' 264'"/>
-            </svg>
-            <div class="absolute inset-0 flex items-center justify-center">
-              <span class="text-[11px] md:text-lg font-bold" :style="'color:' + (call.predicted_ticket ? 'var(--destructive)' : 'var(--chart-1)')"
-                x-text="(call.probability * 100).toFixed(0) + '%'"></span>
-            </div>
-          </div>
-          <div class="text-xs mt-1" style="color: var(--muted-foreground)">Ticket Probability</div>
-        </div>
-
-        <!-- Meta Grid -->
-        <div class="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Outcome</div>
-            <span class="badge"
-              :style="{
-                'completed': 'background: oklch(0.871 0.15 154.449 / 15%); color: var(--chart-1)',
-                'incomplete': 'background: oklch(0.8 0.15 80 / 15%); color: oklch(0.8 0.15 80)',
-                'opted_out': 'background: var(--secondary); color: var(--muted-foreground)',
-                'escalated': 'background: oklch(0.704 0.191 22.216 / 15%); color: var(--destructive)',
-                'wrong_number': 'background: oklch(0.459 0.187 3.815 / 15%); color: var(--primary)',
-                'voicemail': 'background: var(--secondary); color: var(--muted-foreground)',
-                'scheduled': 'background: var(--secondary); color: var(--muted-foreground)',
-              }[call.outcome]" x-text="call.outcome"></span>
-          </div>
-          <div>
-            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Duration</div>
-            <div class="text-lg font-semibold" x-text="call.call_duration + 's'"></div>
-          </div>
-          <div>
-            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Completeness</div>
-            <div class="text-lg font-semibold" x-text="(call.response_completeness * 100).toFixed(0) + '%'"></div>
-          </div>
-          <div>
-            <div class="text-xs mb-1" style="color: var(--muted-foreground)">Category</div>
-            <div class="text-lg font-semibold"
-              :style="{
-                'audio_issue': 'color: var(--chart-4)',
-                'elevenlabs': 'color: var(--primary)',
-                'openai': 'color: var(--chart-2)',
-              }[call.predicted_category] || 'color: var(--muted-foreground)'"
-              x-text="call.predicted_category || 'none'"></div>
-          </div>
-        </div>
-
-        <!-- Verdict -->
-        <div class="px-4 py-2 rounded-xl text-center"
+    <!-- Call Summary Strip -->
+    <div class="panel p-3 fade-in">
+      <div class="flex flex-wrap items-center gap-3 text-sm">
+        <span class="mono font-bold" style="color: var(--foreground)" x-text="call.call_id.slice(0, 12) + '...'"></span>
+        <span class="px-1.5 py-px text-[10px] mono"
+          :style="{
+            'completed': 'color: var(--chart-1); background: oklch(0.55 0.17 155 / 12%)',
+            'incomplete': 'color: var(--chart-4); background: oklch(0.60 0.12 50 / 12%)',
+            'opted_out': 'color: var(--muted-foreground); background: var(--secondary)',
+            'escalated': 'color: var(--destructive); background: oklch(0.65 0.22 25 / 12%)',
+            'wrong_number': 'color: var(--primary); background: oklch(0.65 0.22 4 / 12%)',
+            'voicemail': 'color: var(--muted-foreground); background: var(--secondary)',
+            'scheduled': 'color: var(--muted-foreground); background: var(--secondary)',
+          }[call.outcome]" x-text="call.outcome"></span>
+        <span style="color: var(--muted-foreground)" x-text="call.call_duration + 's'"></span>
+        <span style="color: var(--muted-foreground)" x-text="(call.response_completeness * 100).toFixed(0) + '% comp'"></span>
+        <span style="color: var(--muted-foreground)" x-text="call.answered_count + '/' + 14 + ' answered'"></span>
+        <span x-show="call.whisper_mismatch_count > 0" style="color: var(--chart-4)" x-text="call.whisper_mismatch_count + ' whisper mismatch'"></span>
+        <div class="flex-1"></div>
+        <span class="mono text-lg font-bold" :style="'color:' + (call.predicted_ticket ? 'var(--destructive)' : 'var(--chart-1)')"
+          x-text="(call.probability * 100).toFixed(0) + '%'"></span>
+        <span class="px-2 py-0.5 text-xs font-bold rounded"
           :style="call.predicted_ticket
-            ? 'background: oklch(0.704 0.191 22.216 / 10%); border: 1px solid oklch(0.704 0.191 22.216 / 20%)'
-            : 'background: oklch(0.871 0.15 154.449 / 10%); border: 1px solid oklch(0.871 0.15 154.449 / 20%)'">
-          <div class="text-lg font-bold" :style="'color:' + (call.predicted_ticket ? 'var(--destructive)' : 'var(--chart-1)')"
-            x-text="call.predicted_ticket ? 'FLAGGED' : 'CLEAN'"></div>
-          <div class="text-xs" style="color: var(--muted-foreground)" x-text="'Split: ' + call.split"></div>
-        </div>
+            ? 'background: oklch(0.704 0.191 22.216 / 15%); color: var(--destructive)'
+            : 'background: oklch(0.55 0.17 155 / 12%); color: var(--chart-1)'"
+          x-text="call.predicted_ticket ? 'FLAGGED' : 'CLEAN'"></span>
+        <span class="text-[10px] mono" style="color: var(--muted-foreground)" x-text="call.split"></span>
       </div>
-
       <!-- Validation Notes -->
-      <div x-show="call.validation_notes" class="mt-4 p-3 rounded-lg text-sm" style="background: var(--secondary)">
+      <div x-show="call.validation_notes" class="mt-3 p-3 rounded-lg text-sm" style="background: var(--secondary)">
         <span class="text-xs uppercase" style="color: var(--muted-foreground)">Validation Notes:</span>
         <p class="mt-1" x-text="call.validation_notes"></p>
       </div>
     </div>
 
-    <!-- Signal Breakdown -->
-    <div class="grid md:grid-cols-3 gap-4">
+    <!-- Why Flagged / Why Clean -->
+    <div class="fade-in rounded-lg p-4"
+      :style="call.predicted_ticket
+        ? 'border-left: 4px solid var(--destructive); background: oklch(0.704 0.191 22.216 / 8%)'
+        : 'border-left: 4px solid var(--chart-1); background: oklch(0.871 0.15 154.449 / 8%)'">
+      <div class="text-[10px] font-semibold uppercase tracking-wider mb-1"
+        :style="'color:' + (call.predicted_ticket ? 'var(--destructive)' : 'var(--chart-1)')"
+        x-text="call.predicted_ticket ? 'WHY FLAGGED' : 'WHY CLEAN'"></div>
+      <p class="text-sm" style="color: var(--foreground)" x-text="call.flag_explanation || 'No explanation available'"></p>
+    </div>
+
+    <!-- Signal Report -->
+    <div class="card p-4 fade-in">
+      <h3 class="text-[10px] font-semibold uppercase tracking-widest mb-3" style="color: var(--muted-foreground)">Signal Report</h3>
+      <div class="space-y-0 text-xs">
+
+        <!-- Heuristics -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.heuristics] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Heuristics</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.heuristics?.total_fired > 0 ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="call.signals?.heuristics?.total_fired > 0 ? call.signals.heuristics.total_fired + ' rules fired' : 'All clear'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)"
+            x-text="Object.keys(call.signals?.heuristics?.fired || {}).map(r => r.replace('rule_','').replaceAll('_',' ')).join(', ') || ''"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Completed but low completeness? Outcome mismatch?</span>
+        </div>
+
+        <!-- Transcript Diff -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.transcript_diff] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Transcript Diff</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.transcript_diff?.wer > 0.1 ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="(call.signals?.transcript_diff?.wer * 100).toFixed(1) + '% word error'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="(call.signals?.transcript_diff?.cer * 100).toFixed(1) + '% char error, ' + (call.signals?.transcript_diff?.similarity * 100).toFixed(0) + '% similar'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Do the two transcript recordings match?</span>
+        </div>
+
+        <!-- Number Checker -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.number_checker] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Number Checker</span>
+          <span class="mono w-28 shrink-0" :style="(call.signals?.number_checker?.mismatches + call.signals?.number_checker?.implausible) > 0 ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="(call.signals?.number_checker?.mismatches + call.signals?.number_checker?.implausible) > 0 ? 'Issues found' : 'All clear'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="call.signals?.number_checker?.mismatches + ' mismatch, ' + call.signals?.number_checker?.implausible + ' implausible'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Are health numbers realistic? (262 lbs vs 62)</span>
+        </div>
+
+        <!-- Flow Checker -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.flow_checker] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Flow Checker</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.flow_checker?.question_coverage < 0.8 ? 'color: var(--chart-4)' : 'color: var(--chart-1)'"
+            x-text="(call.signals?.flow_checker?.question_coverage * 100).toFixed(0) + '% coverage'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="'Edit dist: ' + call.signals?.flow_checker?.edit_distance + ', Missing: ' + call.signals?.flow_checker?.missing_states"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Did the call follow greeting → questions → closing?</span>
+        </div>
+
+        <!-- Outcome Predictor -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.outcome_predictor] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Outcome Pred</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.outcome_predictor?.disagreement ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="call.signals?.outcome_predictor?.disagreement ? 'DISAGREEMENT' : 'No disagreement'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="'Confidence: ' + (call.signals?.outcome_predictor?.confidence * 100).toFixed(0) + '%'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Does the label match what actually happened?</span>
+        </div>
+
+        <!-- Keyword Flags -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.text_features] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Keywords</span>
+          <span class="mono w-28 shrink-0" :style="Object.keys(call.signals?.text_features?.keywords_found || {}).length > 0 ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="Object.keys(call.signals?.text_features?.keywords_found || {}).length > 0 ? Object.keys(call.signals.text_features.keywords_found).join(', ') : 'No issues'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Issue words in validation notes? (error, mismatch, skipped)</span>
+        </div>
+
+        <!-- Response Checker -->
+        <div class="flex items-center gap-2 py-1.5" style="border-bottom: 1px solid var(--border)">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.response_checker] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">Response Check</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.response_checker?.not_in_transcript > 0.1 ? 'color: var(--destructive)' : 'color: var(--chart-1)'"
+            x-text="(call.signals?.response_checker?.not_in_transcript * 100).toFixed(0) + '% not found'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="call.signals?.response_checker?.empty_count + ' empty, ' + (call.signals?.response_checker?.binary_ratio * 100).toFixed(0) + '% binary'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Are recorded answers actually in the transcript?</span>
+        </div>
+
+        <!-- NLI -->
+        <div class="flex items-center gap-2 py-1.5">
+          <span class="w-1.5 h-1.5 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.nli] || 'var(--muted-foreground)')"></span>
+          <span class="w-28 shrink-0 font-semibold">NLI Checker</span>
+          <span class="mono w-28 shrink-0" :style="call.signals?.nli?.max_contradiction > 0.7 ? 'color: var(--destructive)' : call.signals?.nli?.max_contradiction > 0.3 ? 'color: var(--chart-4)' : 'color: var(--chart-1)'"
+            x-text="(call.signals?.nli?.max_contradiction * 100).toFixed(0) + '% contradiction'"></span>
+          <span class="mono text-[10px]" style="color: var(--muted-foreground)" x-text="call.signals?.nli?.num_contradictions + ' found, ' + (call.signals?.nli?.mean_entailment * 100).toFixed(0) + '% consistent'"></span>
+          <span class="flex-1 text-right text-[10px] hidden md:inline" style="color: var(--muted-foreground); opacity: 0.5">Do the notes contradict the structured data? (DeBERTa)</span>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="display:none">
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Heuristic Rules</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.heuristics] || 'var(--muted-foreground)')"></span>Heuristic Rules</h3>
         <div x-show="call.signals?.heuristics?.total_fired > 0">
           <template x-for="[rule, val] in Object.entries(call.signals?.heuristics?.fired || {})" :key="rule">
             <div class="flex items-center gap-2 text-sm py-1">
@@ -187,57 +255,57 @@
       </div>
 
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Transcript Diff</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.transcript_diff] || 'var(--muted-foreground)')"></span>Transcript Diff</h3>
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Word Error Rate</span>
+            <span style="color: var(--muted-foreground)" title="Percentage of words differing between the formatted transcript and raw STT output">Word Error Rate</span>
             <span :style="'color:' + (call.signals?.transcript_diff?.wer > 0.1 ? 'var(--destructive)' : 'var(--chart-1)')"
               x-text="(call.signals?.transcript_diff?.wer * 100).toFixed(1) + '%'"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Char Error Rate</span>
+            <span style="color: var(--muted-foreground)" title="Character-level error rate between formatted and raw transcripts">Char Error Rate</span>
             <span x-text="(call.signals?.transcript_diff?.cer * 100).toFixed(1) + '%'"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Similarity</span>
+            <span style="color: var(--muted-foreground)" title="Sequence similarity between transcripts (1.0 = identical)">Similarity</span>
             <span x-text="(call.signals?.transcript_diff?.similarity * 100).toFixed(1) + '%'"></span>
           </div>
         </div>
       </div>
 
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Number Checker</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.number_checker] || 'var(--muted-foreground)')"></span>Number Checker</h3>
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">STT Mismatches</span>
+            <span style="color: var(--muted-foreground)" title="Number mismatch between recorded answer and transcript (substring/transposition error)">STT Mismatches</span>
             <span :style="'color:' + (call.signals?.number_checker?.mismatches > 0 ? 'var(--destructive)' : 'var(--chart-1)')"
               x-text="call.signals?.number_checker?.mismatches"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Implausible Values</span>
+            <span style="color: var(--muted-foreground)" title="Recorded health values outside physiological range (e.g., weight under 50 lbs)">Implausible Values</span>
             <span :style="'color:' + (call.signals?.number_checker?.implausible > 0 ? 'oklch(0.8 0.15 80)' : 'var(--chart-1)')"
               x-text="call.signals?.number_checker?.implausible"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Transcript Gaps</span>
+            <span style="color: var(--muted-foreground)" title="Answers recorded in responses but their numbers not found in transcript">Transcript Gaps</span>
             <span x-text="call.signals?.number_checker?.gaps"></span>
           </div>
         </div>
       </div>
 
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Call Flow</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.flow_checker] || 'var(--muted-foreground)')"></span>Call Flow</h3>
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Edit Distance</span>
+            <span style="color: var(--muted-foreground)" title="Levenshtein edit distance from the expected 19-state call flow sequence">Edit Distance</span>
             <span x-text="call.signals?.flow_checker?.edit_distance"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Missing States</span>
+            <span style="color: var(--muted-foreground)" title="Number of expected call flow states not found in the transcript">Missing States</span>
             <span x-text="call.signals?.flow_checker?.missing_states"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Question Coverage</span>
+            <span style="color: var(--muted-foreground)" title="Fraction of 14 expected health questions found in the transcript">Question Coverage</span>
             <span :style="'color:' + (call.signals?.flow_checker?.question_coverage < 0.5 ? 'oklch(0.8 0.15 80)' : 'var(--chart-1)')"
               x-text="(call.signals?.flow_checker?.question_coverage * 100).toFixed(0) + '%'"></span>
           </div>
@@ -245,22 +313,22 @@
       </div>
 
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Outcome Predictor</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.outcome_predictor] || 'var(--muted-foreground)')"></span>Outcome Predictor</h3>
         <div class="space-y-2 text-sm">
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Disagreement</span>
+            <span style="color: var(--muted-foreground)" title="Whether a separate model predicts a different outcome than recorded">Disagreement</span>
             <span :style="'color:' + (call.signals?.outcome_predictor?.disagreement ? 'var(--destructive)' : 'var(--chart-1)')"
               x-text="call.signals?.outcome_predictor?.disagreement ? 'YES' : 'No'"></span>
           </div>
           <div class="flex justify-between">
-            <span style="color: var(--muted-foreground)">Confidence</span>
+            <span style="color: var(--muted-foreground)" title="How confident the outcome predictor is about its top prediction">Confidence</span>
             <span x-text="(call.signals?.outcome_predictor?.confidence * 100).toFixed(1) + '%'"></span>
           </div>
         </div>
       </div>
 
       <div class="card p-5 fade-in">
-        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3" style="color: var(--muted-foreground)">Keyword Flags</h3>
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.text_features] || 'var(--muted-foreground)')"></span>Keyword Flags</h3>
         <div x-show="Object.keys(call.signals?.text_features?.keywords_found || {}).length > 0">
           <template x-for="[kw, val] in Object.entries(call.signals?.text_features?.keywords_found || {})" :key="kw">
             <span class="inline-block px-2 py-0.5 rounded text-xs mr-1 mb-1"
@@ -269,6 +337,78 @@
         </div>
         <div x-show="Object.keys(call.signals?.text_features?.keywords_found || {}).length === 0"
           class="text-sm" style="color: var(--chart-1); opacity: 0.7">&#10003; No issue keywords</div>
+      </div>
+
+      <div class="card p-5 fade-in">
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)"><span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.response_checker] || 'var(--muted-foreground)')"></span>Response Checker</h3>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span style="color: var(--muted-foreground)" title="Fraction of recorded responses that cannot be found in the call transcript">Not in Transcript</span>
+            <span :style="'color:' + (call.signals?.response_checker?.not_in_transcript > 0.1 ? 'var(--destructive)' : 'var(--chart-1)')"
+              x-text="(call.signals?.response_checker?.not_in_transcript * 100).toFixed(1) + '%'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span style="color: var(--muted-foreground)" title="Number of questionnaire answers that are blank or missing">Empty Responses</span>
+            <span :style="'color:' + (call.signals?.response_checker?.empty_count > 3 ? 'oklch(0.8 0.15 80)' : 'var(--chart-1)')"
+              x-text="call.signals?.response_checker?.empty_count"></span>
+          </div>
+          <div class="flex justify-between">
+            <span style="color: var(--muted-foreground)" title="Fraction of answers that are just Yes or No — high ratio may indicate minimal engagement">Binary Answer %</span>
+            <span x-text="(call.signals?.response_checker?.binary_ratio * 100).toFixed(0) + '%'"></span>
+          </div>
+          <div class="flex justify-between">
+            <span style="color: var(--muted-foreground)" title="Average user word count per answered question — low values suggest rushed responses">Words/Answer</span>
+            <span x-text="call.signals?.response_checker?.words_per_answered.toFixed(1)"></span>
+          </div>
+          <div class="flex justify-between">
+            <span style="color: var(--muted-foreground)" title="Average call duration in seconds per answered question">Duration/Answer</span>
+            <span x-text="call.signals?.response_checker?.duration_per_answered.toFixed(1) + 's'"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-5 fade-in md:col-span-3">
+        <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5" style="color: var(--muted-foreground)">
+          <span class="w-2 h-2 rounded-full shrink-0" :style="'background:' + ({'green':'var(--chart-1)','yellow':'oklch(0.8 0.15 80)','red':'var(--destructive)'}[call.signal_health?.nli] || 'var(--muted-foreground)')"></span>NLI Contradiction Detection
+          <span class="font-normal text-[10px] ml-2" style="color: var(--muted-foreground)">(DeBERTa-v3)</span>
+        </h3>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)" title="Highest NLI contradiction score across all hypothesis checks">Max Contradiction</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.max_contradiction > 0.7 ? 'var(--destructive)' : call.signals?.nli?.max_contradiction > 0.3 ? 'oklch(0.8 0.15 80)' : 'var(--chart-1)')"
+              x-text="(call.signals?.nli?.max_contradiction * 100).toFixed(1) + '%'"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)" title="Number of hypotheses with contradiction score above 50%">Contradictions Found</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.num_contradictions > 0 ? 'var(--destructive)' : 'var(--chart-1)')"
+              x-text="call.signals?.nli?.num_contradictions"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-1" style="color: var(--muted-foreground)" title="Average entailment score — low values mean notes contradict structured data">Mean Entailment</div>
+            <div class="text-2xl font-bold"
+              :style="'color:' + (call.signals?.nli?.mean_entailment < 0.3 ? 'var(--destructive)' : 'var(--chart-1)')"
+              x-text="(call.signals?.nli?.mean_entailment * 100).toFixed(1) + '%'"></div>
+          </div>
+          <div>
+            <div class="text-xs mb-2" style="color: var(--muted-foreground)">Per-Hypothesis</div>
+            <div class="space-y-1 text-xs">
+              <template x-for="[key, label] in [['answered_count_contradiction', 'Answers'], ['outcome_contradiction', 'Outcome'], ['completeness_contradiction', 'Completeness']]" :key="key">
+                <div class="flex justify-between items-center">
+                  <span style="color: var(--muted-foreground)" x-text="label"></span>
+                  <div class="flex items-center gap-1.5">
+                    <div class="w-16 h-1.5" style="background: var(--secondary)">
+                      <div class="h-full bar-animate" :style="'width:' + ((call.signals?.nli?.[key] || 0) * 100) + '%; background:' + ((call.signals?.nli?.[key] || 0) > 0.5 ? 'var(--destructive)' : 'var(--chart-1)')"></div>
+                    </div>
+                    <span class="w-10 text-right font-mono" :style="(call.signals?.nli?.[key] || 0) > 0.5 ? 'color: var(--destructive)' : 'color: var(--muted-foreground)'"
+                      x-text="((call.signals?.nli?.[key] || 0) * 100).toFixed(0) + '%'"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -310,22 +450,6 @@
       </div>
     </div>
 
-    <!-- Top Features -->
-    <div class="card p-4 md:p-6 fade-in overflow-hidden">
-      <h3 class="text-xs font-semibold uppercase tracking-wider mb-4" style="color: var(--muted-foreground)">Top Features (This Call)</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-1">
-        <template x-for="feat in call.top_features?.slice(0, 20) || []" :key="feat.name">
-          <div class="flex items-center gap-2 min-w-0">
-            <span class="text-xs w-28 md:w-44 truncate shrink-0" style="color: var(--muted-foreground)" x-text="feat.name"></span>
-            <div class="flex-1 h-1.5 min-w-8 overflow-hidden" style="background: var(--secondary)">
-              <div class="h-full bar-animate" style="background: var(--muted-foreground); opacity: 0.5"
-                :style="'width:' + Math.min(Math.abs(feat.value) / (call.top_features?.[0]?.value || 1) * 100, 100) + '%'"></div>
-            </div>
-            <span class="text-xs w-10 md:w-14 text-right font-mono shrink-0" style="color: var(--muted-foreground)" x-text="feat.value"></span>
-          </div>
-        </template>
-      </div>
-    </div>
   </main>
 
   <!-- Loading -->
@@ -345,6 +469,9 @@
         probability: 0, predicted_ticket: false, predicted_category: '',
         split: '', validation_notes: '', transcript_turns: [], responses: [],
         top_features: [],
+        signal_health: {},
+        flag_explanation: '',
+        contributions: [],
         signals: {
           heuristics: { fired: {}, total_fired: 0 },
           transcript_diff: { wer: 0, cer: 0, similarity: 1 },
@@ -352,6 +479,8 @@
           flow_checker: { edit_distance: 0, missing_states: 0, question_coverage: 0 },
           outcome_predictor: { disagreement: 0, confidence: 0 },
           text_features: { keywords_found: {} },
+          response_checker: { not_in_transcript: 0, empty_count: 0, binary_ratio: 0, words_per_answered: 0, duration_per_answered: 0 },
+          nli: { max_contradiction: 0, answered_count_contradiction: 0, outcome_contradiction: 0, completeness_contradiction: 0, num_contradictions: 0, mean_entailment: 1 },
         },
       };
       return {
@@ -369,7 +498,7 @@
           const callId = window.location.pathname.split('/call/')[1];
           const data = await fetch('/api/call/' + callId).then(r => r.json());
           if (!data.error) {
-            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals } };
+            this.call = { ...empty, ...data, signals: { ...empty.signals, ...data.signals }, signal_health: data.signal_health || {} };
             this.loaded = true;
           }
         },

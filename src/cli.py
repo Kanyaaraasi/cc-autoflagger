@@ -37,6 +37,39 @@ def pipeline():
     log.info("DONE")
 
 
+def nli_extract():
+    """Pre-compute NLI contradiction features for all splits."""
+    from .data_loader import load_all
+    from .signals.nli_checker import NLIChecker
+    from .config import OUTPUT_DIR
+    from .logger import get_logger
+
+    log = get_logger("nli")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    train, val, test = load_all()
+    checker = NLIChecker()
+    checker.fit(train)
+
+    for name, df in [("train", train), ("val", val), ("test", test)]:
+        log.info(f"Computing NLI features for {name} ({len(df)} calls)...")
+        features = checker.transform(df)
+        out_path = OUTPUT_DIR / f"nli_{name}.parquet"
+        features.to_parquet(out_path)
+        log.info(f"  Saved to {out_path} ({features.shape[1]} features)")
+
+
+def stack():
+    """Run stacking meta-learner: ML + NLI → final predictions."""
+    import sys
+    from .stack import stack_and_predict
+    threshold = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--threshold" and i + 1 < len(sys.argv):
+            threshold = float(sys.argv[i + 1])
+    stack_and_predict(threshold_override=threshold)
+
+
 def eda():
     from .eda import main
     main()

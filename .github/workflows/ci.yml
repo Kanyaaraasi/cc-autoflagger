@@ -35,16 +35,27 @@ jobs:
       - name: Run pipeline (extract → train → predict)
         run: uv run pipeline
 
+      - name: Run NLI extraction
+        run: uv run nli-extract
+
+      - name: Run stacking meta-learner
+        run: uv run stack
+
       - name: Export static dashboard
         run: uv run export-static
 
       - name: Verify outputs
         run: |
           test -f outputs/submission.csv
+          test -f outputs/submission_stacked.csv
           test -f models/model.pkl
           test -f models/config.json
+          test -f models/meta_model.pkl
+          test -f models/meta_config.json
           test -f dist/index.html
+          test -f dist/dashboard.html
           test -f dist/call.html
+          test -f dist/favicon.svg
           echo "All outputs verified"
 
       # --- Release model artifacts ---
@@ -54,14 +65,15 @@ jobs:
           python3 -c "
           import json
           c = json.load(open('models/config.json'))
-          print(f'model={c[\"best_model\"]}')
-          print(f'threshold={c[\"threshold\"]}')
-          print(f'features={len(c[\"columns\"])}')
           m = c.get('val_metrics', {})
+          mc = json.load(open('models/meta_config.json')) if __import__('os').path.exists('models/meta_config.json') else {}
+          print(f'model={mc.get(\"meta_features\") and \"Stacked NLI + LightGBM\" or c[\"best_model\"]}')
+          print(f'threshold={mc.get(\"threshold\", c[\"threshold\"])}')
+          print(f'features={len(c[\"columns\"])}')
           print(f'f1={m.get(\"f1\", \"?\")}')
           print(f'precision={m.get(\"precision\", \"?\")}')
           print(f'recall={m.get(\"recall\", \"?\")}')
-          print(f'cv_f1={c.get(\"cv_f1_mean\", \"?\")} ± {c.get(\"cv_f1_std\", \"?\")}')
+          print(f'cv_f1={mc.get(\"cv_f1_mean\", c.get(\"cv_f1_mean\", \"?\"))} ± {mc.get(\"cv_f1_std\", c.get(\"cv_f1_std\", \"?\"))}')
           " >> "$GITHUB_OUTPUT"
           echo "tag=v$(date -u +%Y%m%d.%H%M%S)" >> "$GITHUB_OUTPUT"
 

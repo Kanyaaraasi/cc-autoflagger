@@ -15,6 +15,8 @@ dependencies = [
     # text / nlp signals
     "jiwer",
     "word2number",
+    "transformers",
+    "torch",
     "fastapi>=0.135.2",
     "uvicorn>=0.42.0",
 ]
@@ -34,6 +36,8 @@ train = "src.cli:train"
 predict = "src.cli:predict"
 dashboard = "src.app:main"
 export-static = "src.export_static:main"
+nli-extract = "src.cli:nli_extract"
+stack = "src.cli:stack"
 
 [dependency-groups]
 dev = [
