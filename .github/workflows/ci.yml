@@ -95,11 +95,13 @@ jobs:
 
             **Dashboard:** [cc-autoflagger.pages.dev](https://cc-autoflagger.pages.dev)
 
-            **Files:** `model.pkl`, `config.json`, `submission.csv`
+            **Files:** `model.pkl`, `meta_model.pkl`, `config.json`, `meta_config.json`, `submission_stacked.csv`
           files: |
             models/model.pkl
+            models/meta_model.pkl
             models/config.json
-            outputs/submission.csv
+            models/meta_config.json
+            outputs/submission_stacked.csv
 
       # --- Deploy to Cloudflare Pages ---
       - name: Deploy to Cloudflare Pages
