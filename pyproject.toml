@@ -36,8 +36,6 @@ train = "src.cli:train"
 predict = "src.cli:predict"
 dashboard = "src.app:main"
 export-static = "src.export_static:main"
-nli-extract = "src.cli:nli_extract"
-stack = "src.cli:stack"
 
 [dependency-groups]
 dev = [

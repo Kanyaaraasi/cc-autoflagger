@@ -23,26 +23,11 @@ def build_api_data():
     columns = config["columns"]
     threshold = config["threshold"]
 
-    # Meta-model if available
-    meta_model, meta_config = None, None
-    if (MODEL_DIR / "meta_model.pkl").exists():
-        with open(MODEL_DIR / "meta_model.pkl", "rb") as f:
-            meta_model = pickle.load(f)
-        with open(MODEL_DIR / "meta_config.json") as f:
-            meta_config = json.load(f)
-
     train, val, test = load_all()
 
     X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[columns]
     X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
     X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
-
-    # NLI features
-    nli_splits = {}
-    for name in ["train", "val", "test"]:
-        nli_path = OUTPUT_DIR / f"nli_{name}.parquet"
-        if nli_path.exists():
-            nli_splits[name] = pd.read_parquet(nli_path)
 
     # Build calls data for all splits
     all_calls = []
@@ -89,21 +74,6 @@ def build_api_data():
             nonzero = feat_row[feat_row != 0].abs().sort_values(ascending=False)
             top_features = [{"name": k, "value": round(float(feat_row[k]), 4)} for k in nonzero.head(20).index]
 
-            # NLI signals
-            nli_signals = {"max_contradiction": 0, "answered_count_contradiction": 0,
-                           "outcome_contradiction": 0, "completeness_contradiction": 0,
-                           "num_contradictions": 0, "mean_entailment": 1}
-            if name in nli_splits:
-                nli_row = nli_splits[name].iloc[idx]
-                nli_signals = {
-                    "max_contradiction": round(float(nli_row.get("nli_max_contradiction", 0)), 4),
-                    "answered_count_contradiction": round(float(nli_row.get("nli_answered_count_contradiction", 0)), 4),
-                    "outcome_contradiction": round(float(nli_row.get("nli_outcome_contradiction", 0)), 4),
-                    "completeness_contradiction": round(float(nli_row.get("nli_completeness_contradiction", 0)), 4),
-                    "num_contradictions": int(nli_row.get("nli_num_contradictions", 0)),
-                    "mean_entailment": round(float(nli_row.get("nli_mean_entailment", 1)), 4),
-                }
-
             signals = {
                     "heuristics": {"fired": rule_cols, "total_fired": sum(rule_cols.values())},
                     "transcript_diff": {
@@ -134,7 +104,6 @@ def build_api_data():
                         "words_per_answered": round(float(feat_row.get("resp_words_per_answered", 0)), 1),
                         "duration_per_answered": round(float(feat_row.get("resp_duration_per_answered", 0)), 1),
                     },
-                "nli": nli_signals,
             }
 
             # Compute importance for contributions
@@ -166,16 +135,7 @@ def build_api_data():
         imp = pd.Series(model.feature_importances_, index=columns).sort_values(ascending=False)
         features_list = [{"feature": k, "importance": round(float(v), 4)} for k, v in imp.head(30).items()]
 
-    meta_learner_list = None
-    if meta_model and hasattr(meta_model, "coef_") and meta_config:
-        meta_features = meta_config.get("meta_features", [])
-        if len(meta_features) == len(meta_model.coef_[0]):
-            meta_learner_list = [
-                {"name": feat, "coefficient": round(float(coef), 4), "direction": "ticket" if coef > 0 else "clean"}
-                for feat, coef in zip(meta_features, meta_model.coef_[0])
-            ]
-
-    importance_data = {"features": features_list, "meta_learner": meta_learner_list}
+    importance_data = {"features": features_list, "meta_learner": None}
 
     # Threshold sweep
     all_proba = np.concatenate([
@@ -200,11 +160,11 @@ def build_api_data():
 
     threshold_sweep = {
         "sweep": sweep,
-        "cv_folds": meta_config.get("cv_f1_scores", []) if meta_config else [],
-        "cv_f1_mean": meta_config.get("cv_f1_mean") if meta_config else None,
-        "cv_f1_std": meta_config.get("cv_f1_std") if meta_config else None,
+        "cv_folds": config.get("cv_f1_scores", []),
+        "cv_f1_mean": config.get("cv_f1_mean"),
+        "cv_f1_std": config.get("cv_f1_std"),
         "base_model": {"val_f1": config.get("val_metrics", {}).get("f1"), "threshold": config.get("threshold")},
-        "stacked_model": {"val_f1": meta_config.get("val_f1"), "threshold": meta_config.get("threshold")} if meta_config else None,
+        "stacked_model": None,
     }
 
     # Outcome breakdown
@@ -218,19 +178,7 @@ def build_api_data():
             outcome_counts[o]["flagged"] += 1
 
     flagged = [c for c in all_calls if c["predicted_ticket"]]
-    model_name = "Stacked NLI + LightGBM" if meta_config else config["best_model"].upper()
-
-    # NLI summary
-    nli_summary = None
-    if nli_splits:
-        all_nli = pd.concat([nli_splits.get(n, pd.DataFrame()) for n in ["train", "val", "test"]], ignore_index=True)
-        if "nli_max_contradiction" in all_nli.columns:
-            scores = all_nli["nli_max_contradiction"]
-            nli_summary = {
-                "Strong contradiction": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
-                "Mild contradiction": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
-                "No contradiction": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
-            }
+    model_name = config["best_model"].upper()
 
     stats = {
         "total_calls": len(all_calls),
@@ -244,9 +192,9 @@ def build_api_data():
         },
         "model": model_name,
         "feature_count": len(columns),
-        "has_nli": bool(nli_splits),
-        "has_stacking": meta_config is not None,
-        "nli_summary": nli_summary,
+        "has_nli": False,
+        "has_stacking": False,
+        "nli_summary": None,
         "outcome_breakdown": outcome_counts,
         "splits": {"train": len(train), "val": len(val), "test": len(test)},
     }
@@ -263,7 +211,6 @@ def build_api_data():
             {"name": "Text Analysis", "feature_count": 30, "description": "What do validation notes say?"},
             {"name": "Outcome Predictor", "feature_count": 4, "description": "Does the label match the conversation?"},
             {"name": "Response Checker", "feature_count": 5, "description": "Are recorded answers in the transcript?"},
-            {"name": "NLI Checker", "feature_count": 6, "description": "Do the notes contradict the data?"},
         ],
         "total_features": len(columns),
     }

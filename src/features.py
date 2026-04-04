@@ -60,17 +60,6 @@ class FeaturePipeline:
 
         parts = [structured, heur, diff, nums, flow, text, outcome, resp]
 
-        # Load pre-computed NLI features if available
-        if split_name:
-            nli_path = OUTPUT_DIR / f"nli_{split_name}.parquet"
-            if nli_path.exists():
-                nli = pd.read_parquet(nli_path)
-                nli.index = df.index
-                parts.append(nli)
-                log.info(f"{prefix}Loaded {nli.shape[1]} NLI features from disk")
-            else:
-                log.info(f"{prefix}No NLI features found (run 'uv run nli-extract' first)")
-
         all_features = pd.concat(parts, axis=1)
 
         log.info(f"{prefix}Total features: {all_features.shape[1]}")

@@ -2,9 +2,8 @@ from pathlib import Path
 
 # --- Paths ---
 PROJECT_ROOT = Path(__file__).parent.parent
-DATASET_DIR = PROJECT_ROOT / "datasets"
-CSV_DIR = DATASET_DIR / "csv"
-JSON_DIR = DATASET_DIR / "json"
+DATASET_DIR = PROJECT_ROOT / "datasets-v2"
+CSV_DIR = DATASET_DIR / "participants"
 OUTPUT_DIR = PROJECT_ROOT / "outputs"
 MODEL_DIR = PROJECT_ROOT / "models"
 
@@ -18,13 +17,14 @@ TARGET = "has_ticket"
 # --- Columns that MUST NOT be used as features (data leakage) ---
 LEAKAGE_COLS = [
     "has_ticket",
-    "ticket_has_reason",
     "ticket_priority",
     "ticket_status",
     "ticket_initial_notes",
     "ticket_resolution_notes",
     "ticket_cat_audio_issue",
-    "ticket_cat_audio_notes",
+    "ticket_cat_audio_issue_notes",
+    "review_flag",
+    "review_flag_reason",
     "ticket_cat_elevenlabs",
     "ticket_cat_elevenlabs_notes",
     "ticket_cat_openai",
@@ -62,7 +62,7 @@ DROP_COLS = LEAKAGE_COLS + ID_COLS + TEXT_COLS + [
 CATEGORICAL_COLS = [
     "outcome",
     "direction",
-    "whisper_status",
+    "pipeline_status",
     "cycle_status",
     "day_of_week",
 ]

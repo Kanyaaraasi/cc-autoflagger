@@ -118,7 +118,7 @@ def extract(df: pd.DataFrame) -> pd.DataFrame:
 
     # Rule 9: form not submitted but call completed
     features["rule_completed_no_form"] = (
-        (df["outcome"] == "completed") & (~df["form_submitted"])
+        (df["outcome"] == "completed") & (df["form_submitted"].fillna(False) == False)
     ).astype(int)
 
     # Rule 10: any heuristic fired (composite)

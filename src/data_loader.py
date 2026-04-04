@@ -4,9 +4,16 @@ import pandas as pd
 
 from .config import TRAIN_CSV, VAL_CSV, TEST_CSV, TARGET
 
+# V2 columns → V1 names so downstream code works unchanged
+COLUMN_MAP = {
+    "pipeline_mismatch_count": "whisper_mismatch_count",
+    "pipeline_status": "whisper_status",
+}
+
 
 def load_split(path, is_test=False) -> pd.DataFrame:
     df = pd.read_csv(path)
+    df = df.rename(columns=COLUMN_MAP)
     if not is_test:
         df[TARGET] = df[TARGET].astype(bool)
     return df

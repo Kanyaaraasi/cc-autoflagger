@@ -24,12 +24,6 @@ def compute_flag_explanation(signals, proba, predicted_ticket):
     """Generate plain-English explanation for why a call was flagged or not."""
     reasons = []
 
-    nli = signals.get("nli", {})
-    if nli.get("max_contradiction", 0) > 0.7:
-        reasons.append(f"NLI detected contradiction between validation notes and call data (score: {nli['max_contradiction']*100:.0f}%)")
-    if nli.get("answered_count_contradiction", 0) > 0.5:
-        reasons.append(f"NLI contradiction on answered count ({nli['answered_count_contradiction']*100:.0f}%)")
-
     resp = signals.get("response_checker", {})
     if resp.get("not_in_transcript", 0) > 0.1:
         reasons.append(f"{resp['not_in_transcript']*100:.0f}% of responses not found in transcript")
@@ -98,10 +92,6 @@ def compute_signal_health(signals):
     nit = resp.get("not_in_transcript", 0)
     health["response_checker"] = "red" if nit > 0.15 else ("yellow" if nit > 0.05 else "green")
 
-    nli = signals.get("nli", {})
-    mc = nli.get("max_contradiction", 0)
-    health["nli"] = "red" if mc > 0.7 else ("yellow" if mc > 0.3 else "green")
-
     return health
 
 
@@ -135,16 +125,6 @@ def _load_state():
     columns = config["columns"]
     threshold = config["threshold"]
 
-    # Load meta-model if available (stacking)
-    meta_model, meta_config = None, None
-    meta_path = MODEL_DIR / "meta_model.pkl"
-    meta_config_path = MODEL_DIR / "meta_config.json"
-    if meta_path.exists() and meta_config_path.exists():
-        with open(meta_path, "rb") as f:
-            meta_model = pickle.load(f)
-        with open(meta_config_path) as f:
-            meta_config = json.load(f)
-
     # Load data
     train, val, test = load_all()
 
@@ -152,13 +132,6 @@ def _load_state():
     X_train = pd.read_parquet(OUTPUT_DIR / "X_train.parquet")[columns]
     X_val = pd.read_parquet(OUTPUT_DIR / "X_val.parquet")[columns]
     X_test = pd.read_parquet(OUTPUT_DIR / "X_test.parquet")[columns]
-
-    # Load NLI features if available
-    nli_splits = {}
-    for name in ["train", "val", "test"]:
-        nli_path = OUTPUT_DIR / f"nli_{name}.parquet"
-        if nli_path.exists():
-            nli_splits[name] = pd.read_parquet(nli_path)
 
     # Compute predictions for all splits
     splits = {}
@@ -181,9 +154,6 @@ def _load_state():
                 "predicted_category": "",
                 "split": name,
             }
-            # Add NLI score if available
-            if name in nli_splits:
-                rec["nli_max_contradiction"] = round(float(nli_splits[name].iloc[idx]["nli_max_contradiction"]), 4)
             if name != "test":
                 rec["actual_ticket"] = bool(row[TARGET])
             records.append(rec)
@@ -204,8 +174,6 @@ def _load_state():
     _state.update({
         "model": model,
         "config": config,
-        "meta_model": meta_model,
-        "meta_config": meta_config,
         "columns": columns,
         "threshold": threshold,
         "splits": splits,
@@ -216,7 +184,6 @@ def _load_state():
         "X_train": X_train,
         "X_val": X_val,
         "X_test": X_test,
-        "nli_splits": nli_splits,
         "importance": importance,
         "val_metrics": {
             "f1": round(f1_score(y_val, val_pred, zero_division=0), 4),
@@ -279,22 +246,7 @@ def get_stats():
         if c["predicted_ticket"]:
             outcome_counts[o]["flagged"] += 1
 
-    # Model info
-    model_name = "Stacked NLI + LightGBM" if s["meta_config"] else s["config"]["best_model"].upper()
-
-    # NLI summary
-    nli_summary = None
-    nli_all = s["nli_splits"]
-    if nli_all:
-        import pandas as pd
-        all_nli = pd.concat([nli_all.get("train", pd.DataFrame()), nli_all.get("val", pd.DataFrame()), nli_all.get("test", pd.DataFrame())], ignore_index=True)
-        if "nli_max_contradiction" in all_nli.columns:
-            scores = all_nli["nli_max_contradiction"]
-            nli_summary = {
-                "Strong contradiction": {"count": int((scores > 0.7).sum()), "color": "var(--destructive)"},
-                "Mild contradiction": {"count": int(((scores > 0.3) & (scores <= 0.7)).sum()), "color": "var(--chart-4)"},
-                "No contradiction": {"count": int((scores <= 0.3).sum()), "color": "var(--chart-1)"},
-            }
+    model_name = s["config"]["best_model"].upper()
 
     return {
         "total_calls": len(all_calls),
@@ -304,10 +256,9 @@ def get_stats():
         "val_metrics": s["val_metrics"],
         "model": model_name,
         "feature_count": len(s["columns"]),
-        "has_nli": bool(s["nli_splits"]),
-        "has_stacking": s["meta_config"] is not None,
-        "stacked_val_f1": s["meta_config"].get("val_f1", s["meta_config"].get("stacked_val_f1")) if s["meta_config"] else None,
-        "nli_summary": nli_summary,
+        "has_nli": False,
+        "has_stacking": False,
+        "nli_summary": None,
         "outcome_breakdown": outcome_counts,
         "splits": {
             "train": len(s["splits"]["train"]),
@@ -414,26 +365,6 @@ def get_call_detail(call_id: str):
             "duration_per_answered": round(float(feat_row.get("resp_duration_per_answered", 0)), 1),
         }
 
-        # NLI signals
-        nli_data = s["nli_splits"].get(split_name)
-        if nli_data is not None:
-            feat_idx = df.index.get_loc(idx)
-            nli_row = nli_data.iloc[feat_idx]
-            signals["nli"] = {
-                "max_contradiction": round(float(nli_row.get("nli_max_contradiction", 0)), 4),
-                "answered_count_contradiction": round(float(nli_row.get("nli_answered_count_contradiction", 0)), 4),
-                "outcome_contradiction": round(float(nli_row.get("nli_outcome_contradiction", 0)), 4),
-                "completeness_contradiction": round(float(nli_row.get("nli_completeness_contradiction", 0)), 4),
-                "num_contradictions": int(nli_row.get("nli_num_contradictions", 0)),
-                "mean_entailment": round(float(nli_row.get("nli_mean_entailment", 1)), 4),
-            }
-        else:
-            signals["nli"] = {
-                "max_contradiction": 0, "answered_count_contradiction": 0,
-                "outcome_contradiction": 0, "completeness_contradiction": 0,
-                "num_contradictions": 0, "mean_entailment": 1,
-            }
-
         # Top features for this call
         nonzero = feat_row[feat_row != 0].abs().sort_values(ascending=False)
         top_features = [{"name": k, "value": round(float(feat_row[k]), 4)} for k in nonzero.head(20).index]
@@ -481,19 +412,7 @@ def get_importance(top: int = Query(default=30)):
         for name, val in imp.head(top).items()
     ]
 
-    # Meta-learner coefficients as structured data
-    meta_learner = None
-    meta = _state.get("meta_config")
-    if meta and _state.get("meta_model"):
-        meta_model = _state["meta_model"]
-        meta_features = meta.get("meta_features", [])
-        if hasattr(meta_model, "coef_") and len(meta_features) == len(meta_model.coef_[0]):
-            meta_learner = [
-                {"name": feat, "coefficient": round(float(coef), 4), "direction": "ticket" if coef > 0 else "clean"}
-                for feat, coef in zip(meta_features, meta_model.coef_[0])
-            ]
-
-    return {"features": features, "meta_learner": meta_learner}
+    return {"features": features, "meta_learner": None}
 
 
 @app.get("/api/threshold-sweep")
@@ -525,15 +444,14 @@ def get_threshold_sweep():
             "tp": tp, "fp": fp, "fn": fn, "tn": tn,
         })
 
-    meta = s.get("meta_config") or {}
     config = s.get("config", {})
     return {
         "sweep": sweep,
-        "cv_folds": meta.get("cv_f1_scores", []),
-        "cv_f1_mean": meta.get("cv_f1_mean"),
-        "cv_f1_std": meta.get("cv_f1_std"),
+        "cv_folds": config.get("cv_f1_scores", []),
+        "cv_f1_mean": config.get("cv_f1_mean"),
+        "cv_f1_std": config.get("cv_f1_std"),
         "base_model": {"val_f1": config.get("val_metrics", {}).get("f1"), "threshold": config.get("threshold")},
-        "stacked_model": {"val_f1": meta.get("val_f1"), "threshold": meta.get("threshold")},
+        "stacked_model": None,
     }
 
 
@@ -549,25 +467,12 @@ def get_pipeline_info():
         {"name": "Text Analysis", "key": "text_features", "description": "What do the AI's validation notes say? Looks for words like 'error', 'mismatch', 'skipped'.", "feature_count": 30},
         {"name": "Outcome Predictor", "key": "outcome_predictor", "description": "Does the recorded label match what actually happened? A separate model predicts the outcome independently.", "feature_count": 4},
         {"name": "Response Checker", "key": "response_checker", "description": "Are the recorded answers actually in the transcript? Catches fabricated or missing responses.", "feature_count": 5},
-        {"name": "NLI Checker", "key": "nli", "description": "Do the notes contradict the data? Uses a language model (DeBERTa) to detect logical contradictions.", "feature_count": 6},
     ]
-    meta = s.get("meta_config") or {}
     config = s.get("config", {})
     return {
         "signals": signals,
         "total_features": len(config.get("columns", [])),
         "model": config.get("best_model", "lgb").upper(),
-        "stacking": {
-            "meta_features": len(meta.get("meta_features", [])),
-            "description": "Two models work together: LightGBM finds patterns in numbers, DeBERTa catches contradictions in text. A meta-learner combines both.",
-        },
-        "results": {
-            "private_f1": 1.0,
-            "public_f1": 1.0,
-            "flagged": 18,
-            "total_test": 159,
-            "cv_f1_mean": meta.get("cv_f1_mean"),
-        },
     }
 
 
