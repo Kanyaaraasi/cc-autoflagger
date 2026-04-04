@@ -12,6 +12,8 @@ ISSUE_KEYWORDS = [
     "medical advice", "discrepancy", "wrong", "miscategorized",
     "violated", "guardrail", "incomplete", "contradicts",
     "differs", "never asked", "not asked", "fabricated",
+    "corrected", "failure", "escalation", "null", "empty",
+    "not answered", "misheard", "mislabel",
 ]
 
 
@@ -31,13 +33,14 @@ def _validation_notes_length(text: str) -> int:
 class TextFeatureExtractor:
     """Fit on train, transform on any split."""
 
-    def __init__(self, max_tfidf_features: int = 15):
+    def __init__(self, max_tfidf_features: int = 500):
         self.max_tfidf_features = max_tfidf_features
         self.tfidf_vn = TfidfVectorizer(
             max_features=max_tfidf_features,
             stop_words="english",
             ngram_range=(1, 2),
-            min_df=2,
+            min_df=3,
+            sublinear_tf=True,
         )
         self._fitted = False
 

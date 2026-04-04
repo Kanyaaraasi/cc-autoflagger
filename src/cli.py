@@ -38,6 +38,28 @@ def pipeline():
 
 
 
+def llm_extract():
+    """Pre-compute LLM judge features for all splits."""
+    from .data_loader import load_all
+    from .signals.llm_judge import extract
+    from .config import OUTPUT_DIR
+    from .logger import get_logger
+
+    log = get_logger("llm")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    train, val, test = load_all()
+    for name, df in [("train", train), ("val", val), ("test", test)]:
+        out_path = OUTPUT_DIR / f"llm_{name}.parquet"
+        if out_path.exists():
+            log.info(f"Skipping {name} (already exists: {out_path})")
+            continue
+        log.info(f"Processing {name} ({len(df)} calls)...")
+        features = extract(df)
+        features.to_parquet(out_path)
+        log.info(f"Saved {out_path}")
+
+
 def eda():
     from .eda import main
     main()

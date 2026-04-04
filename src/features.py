@@ -16,7 +16,7 @@ class FeaturePipeline:
     """Fits on train, transforms any split into a feature matrix."""
 
     def __init__(self):
-        self.text_extractor = TextFeatureExtractor(max_tfidf_features=50)
+        self.text_extractor = TextFeatureExtractor(max_tfidf_features=500)
         self.outcome_predictor = OutcomePredictor()
         self._fitted = False
 
@@ -59,6 +59,15 @@ class FeaturePipeline:
         resp = response_checker.extract(df)
 
         parts = [structured, heur, diff, nums, flow, text, outcome, resp]
+
+        # Load pre-computed LLM judge features if available
+        if split_name:
+            llm_path = OUTPUT_DIR / f"llm_{split_name}.parquet"
+            if llm_path.exists():
+                llm = pd.read_parquet(llm_path)
+                llm.index = df.index
+                parts.append(llm)
+                log.info(f"{prefix}Loaded {llm.shape[1]} LLM judge features")
 
         all_features = pd.concat(parts, axis=1)
 

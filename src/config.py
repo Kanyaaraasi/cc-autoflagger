@@ -1,4 +1,11 @@
+import os
 from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # --- Paths ---
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -66,6 +73,10 @@ CATEGORICAL_COLS = [
     "cycle_status",
     "day_of_week",
 ]
+
+# --- The 14 health check-in questions (canonical) ---
+# --- API Keys ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # --- The 14 health check-in questions (canonical) ---
 HEALTH_QUESTIONS = [

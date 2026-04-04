@@ -19,6 +19,8 @@ dependencies = [
     "torch",
     "fastapi>=0.135.2",
     "uvicorn>=0.42.0",
+    "openai>=2.30.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [build-system]
@@ -34,6 +36,7 @@ eda = "src.cli:eda"
 extract = "src.cli:extract"
 train = "src.cli:train"
 predict = "src.cli:predict"
+llm-extract = "src.cli:llm_extract"
 dashboard = "src.app:main"
 export-static = "src.export_static:main"
 
