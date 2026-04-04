@@ -115,26 +115,7 @@
     </div>
 
     <!-- MIDDLE ROW: 3 panels -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-
-      <!-- NLI OVERVIEW -->
-      <div class="panel p-3">
-        <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">NLI Contradictions</div>
-        <div class="space-y-2" x-show="stats?.nli_summary">
-          <template x-for="[label, data] in Object.entries(stats?.nli_summary || {})" :key="label">
-            <div>
-              <div class="flex justify-between text-xs mb-0.5">
-                <span class="mono" style="color: var(--muted-foreground)" x-text="label"></span>
-                <span class="mono font-bold" :style="'color:' + data.color" x-text="data.count"></span>
-              </div>
-              <div class="h-1.5 w-full" style="background: var(--secondary)">
-                <div class="h-full bar-fill" :style="'width:' + (data.count / (stats?.total_calls || 1) * 100) + '%; background:' + data.color"></div>
-              </div>
-            </div>
-          </template>
-        </div>
-        <div x-show="!stats?.nli_summary" class="text-xs" style="color: var(--muted-foreground)">Run nli-extract first</div>
-      </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 
       <!-- OUTCOMES -->
       <div class="panel p-3">
@@ -185,9 +166,9 @@
       </div>
     </div>
 
-    <!-- MODEL COMPARISON + CV FOLDS -->
+    <!-- FINAL MODEL -->
     <div class="panel p-3" x-show="sweepData">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
         <div>
           <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Final Model</div>
           <div class="p-3 text-center" style="background: var(--secondary); border: 1px solid var(--chart-1)">
@@ -232,22 +213,6 @@
                 <div class="text-[9px] mt-2" style="color: var(--muted-foreground)" x-text="stats?.feature_count + ' features | Threshold: ' + stats?.threshold?.toFixed(2)"></div>
               </div>
             </template>
-          </div>
-        </div>
-        <div>
-          <div class="text-[10px] uppercase tracking-widest mb-3 font-semibold" style="color: var(--muted-foreground)">Cross-Validation Stability (5 Folds)</div>
-          <div class="flex items-end gap-2 h-16 mb-1" x-show="sweepData?.cv_folds?.length">
-            <template x-for="(score, i) in (sweepData?.cv_folds || [])" :key="i">
-              <div class="flex-1 flex flex-col items-center gap-1">
-                <span class="text-[9px] mono font-bold" :style="score >= 1.0 ? 'color: var(--chart-1)' : 'color: var(--chart-4)'" x-text="score.toFixed(3)"></span>
-                <div class="w-full rounded-sm"
-                  :style="'height:' + Math.max(20, ((score - 0.9) / 0.1) * 100) + '%; background:' + (score >= 1.0 ? 'var(--chart-1)' : 'var(--chart-4)') + '; opacity: 0.8'"></div>
-                <span class="text-[9px] mono" style="color: var(--muted-foreground)" x-text="'Fold ' + (i+1)"></span>
-              </div>
-            </template>
-          </div>
-          <div class="text-[9px] mono text-center" style="color: var(--muted-foreground)" x-show="sweepData?.cv_folds?.length"
-            x-text="'Mean: ' + sweepData?.cv_f1_mean?.toFixed(3) + ' +/- ' + sweepData?.cv_f1_std?.toFixed(3)">
           </div>
         </div>
       </div>
@@ -426,12 +391,11 @@
 
         readableFeature(name) {
           const map = {
-            'nli_max_contradiction': 'NLI: max contradiction',
-            'nli_num_contradictions': 'NLI: contradiction count',
-            'nli_answered_count_contradiction': 'NLI: answered count',
-            'nli_outcome_contradiction': 'NLI: outcome mismatch',
-            'nli_completeness_contradiction': 'NLI: completeness',
-            'nli_mean_entailment': 'NLI: consistency score',
+            'llm_severity': 'LLM: severity score',
+            'llm_mismatch_count': 'LLM: mismatches found',
+            'llm_fabricated_count': 'LLM: fabricated responses',
+            'llm_outcome_correct': 'LLM: outcome correct',
+            'llm_needs_escalation': 'LLM: needs escalation',
             'transcript_word_count': 'Transcript word count',
             'user_word_count': 'Patient word count',
             'agent_word_count': 'Agent word count',
