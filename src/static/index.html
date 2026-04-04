@@ -100,10 +100,10 @@
       <template x-for="(s, i) in [
         { label: 'CALLS', value: stats?.total_calls, color: '', tip: 'Total calls across train, val, and test splits' },
         { label: 'FLAGGED', value: stats?.flagged_calls, sub: stats?.flagged_pct + '%', color: 'var(--destructive)', tip: 'Calls predicted to need human review' },
-        { label: 'TRAIN+VAL F1', value: stats?.trainval_metrics?.f1?.toFixed(3), color: 'var(--chart-1)', tip: 'F1 on train + val combined (includes training data)' },
-        { label: 'VAL F1', value: stats?.val_metrics?.f1?.toFixed(3), color: 'var(--chart-4)', tip: 'F1 on held-out validation set only (honest estimate)' },
-        { label: 'PRECISION', value: stats?.val_metrics?.precision?.toFixed(3), color: '', tip: 'When we flag a call, how often are we right? (val only)' },
-        { label: 'RECALL', value: stats?.val_metrics?.recall?.toFixed(3), color: '', tip: 'Of all actual bad calls, how many did we catch? (val only)' },
+        { label: 'TRAIN+VAL F1', value: stats?.trainval_metrics?.f1?.toFixed(3), color: 'var(--chart-1)', tip: 'F1 on train + val combined' },
+        { label: 'VAL F1', value: stats?.val_metrics?.f1?.toFixed(3), color: 'var(--chart-4)', tip: 'F1 on held-out validation set only' },
+        { label: 'T+V PREC', value: stats?.trainval_metrics?.precision?.toFixed(3), sub: 'val ' + stats?.val_metrics?.precision?.toFixed(3), color: '', tip: 'Precision: train+val / val' },
+        { label: 'T+V REC', value: stats?.trainval_metrics?.recall?.toFixed(3), sub: 'val ' + stats?.val_metrics?.recall?.toFixed(3), color: '', tip: 'Recall: train+val / val' },
       ]" :key="i">
         <div class="px-3 py-2.5" :style="i > 0 ? 'border-left: 1px solid var(--border)' : ''">
           <div class="text-[10px] uppercase tracking-widest mb-1" style="color: var(--muted-foreground)" x-text="s.label"></div>
